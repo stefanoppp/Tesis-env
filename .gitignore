@@ -1,1 +1,5 @@
 /env
+.env
+/UsersApp/pycache
+/UsersApp/migrations/pycache
+/backend/pycache
