@@ -1,5 +1,5 @@
 /env
 .env
-/UsersApp/pycache
-/UsersApp/migrations/pycache
-/backend/pycache
+/UsersApp/__pycache__
+/UsersApp/migrations/__pycache__
+/backend/__pycache__
