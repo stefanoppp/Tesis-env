@@ -8,6 +8,7 @@ from django.contrib.auth import authenticate
 from UsersApp.serializers import RegisterSerializer
 from UsersApp.tasks import enviar_token_verificacion
 from UsersApp.utils import get_redis_connection, generar_y_guardar_token
+from django.contrib.auth.models import update_last_login
 
 class RegisterView(APIView):
     def post(self, request):
@@ -101,10 +102,10 @@ class LoginView(APIView):
             except User.DoesNotExist:
                 pass
             return Response({'error': 'Credenciales inválidas'}, status=401)
-
+        
+        update_last_login(None, user)
         refresh = RefreshToken.for_user(user)
         return Response({
             'refresh': str(refresh),
             'access': str(refresh.access_token),
         })
-

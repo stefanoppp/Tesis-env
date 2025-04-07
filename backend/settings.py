@@ -81,7 +81,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # === INTERNACIONALIZACIÓN ===
 
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'America/Argentina/Buenos_Aires'
 USE_I18N = True
 USE_TZ = True
 
@@ -98,7 +98,9 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 }
-
+SIMPLE_JWT = {
+    'UPDATE_LAST_LOGIN': True,
+}
 # === CORS ===
 
 CORS_ALLOW_ALL_ORIGINS = True
@@ -109,6 +111,7 @@ CELERY_BROKER_URL = 'redis://localhost:6379/0'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 USE_CELERY_FOR_2FA = True
+
 
 # === REDIS (para 2FA) ===
 
