@@ -13,7 +13,10 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = User.objects.create_user(**validated_data)
-        return user  # ✅ NO LLAMES A NADA MÁS ACÁ
+        user.is_active = False  # Se activa cuando se introduce el token
+        user.save()
+        return user
+
 
 # Serializador de verificacion
 class VerifyTokenSerializer(serializers.Serializer):
