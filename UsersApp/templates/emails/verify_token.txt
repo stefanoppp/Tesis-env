@@ -1,0 +1,9 @@
+Hola {{ first_name }},
+
+Tu código de verificación es:
+
+🔐 {{ token }}
+
+Este código expira en {{ expire_minutes }} minutos y tenés hasta 3 intentos para ingresarlo correctamente.
+
+Si no fuiste vos, podés ignorar este mensaje.
