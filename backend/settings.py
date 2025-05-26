@@ -24,6 +24,7 @@ INSTALLED_APPS = [
 
     # Propias
     'UsersApp',
+    "PreprocessingApp"
 ]
 
 # === MIDDLEWARE ===
@@ -135,4 +136,12 @@ REDIS_2FA_MAX_ATTEMPTS = 3
 # === OPCIONAL: para desarrollo rápido (comentar smtp arriba y descomentar esto) ===
 # EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
-# Primero levantamos Redis, luego Celery y por ultimo Django
+# Primero levantamos el entorno de django, luego Redis con docker container, 
+# luego Celery. Para eso hay que pararse en /tesis y hacer:celery -A backend worker --loglevel=info --pool=solo
+
+# Para testear las pruebas de cada app, supone la de users, se hace asi: python manage.py test UsersApp
+# Por ultimo Django, el server de Django
+# -----
+#--------------------------------Preprocessing APP
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'

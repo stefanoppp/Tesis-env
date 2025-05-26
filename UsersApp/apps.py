@@ -1,6 +1,7 @@
+# ✅ UsersApp/apps.py
 from django.apps import AppConfig
 
-class UsersappConfig(AppConfig):
+class UsersAppConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'UsersApp'
 

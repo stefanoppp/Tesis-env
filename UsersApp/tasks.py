@@ -4,7 +4,6 @@ from django.contrib.auth.models import User
 from django.conf import settings
 from django.template.loader import render_to_string
 
-
 @shared_task
 def enviar_token_verificacion(user_id, token):
     user = User.objects.get(id=user_id)
