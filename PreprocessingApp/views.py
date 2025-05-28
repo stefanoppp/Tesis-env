@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework import status
+from PreprocessingApp.tasks import procesar_csv
 
 from .models import CSVModel
 from .serializers import CSVUploadSerializer, ProcessRequestSerializer, CSVResultSerializer
@@ -10,14 +11,21 @@ from .tasks import procesar_csv
 
 class UploadCSVView(APIView):
     permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser]
 
     def post(self, request):
-        serializer = CSVUploadSerializer(data=request.data, context={'request': request})
-        if serializer.is_valid():
-            instance = serializer.save()
-            return Response({'message': 'Archivo subido correctamente', 'id': instance.id}, status=201)
-        return Response(serializer.errors, status=400)
+        file = request.FILES.get('csv')
+        if not file:
+            return Response({'error': 'No se proporcionó ningún archivo CSV'}, status=400)
+
+        file_name = file.name.split('/')[-1]  # Asegura que solo se use el nombre sin el path
+        if CSVModel.objects.filter(user=request.user, file__icontains=file_name).exists():
+            return Response({'error': 'Ya subiste este archivo antes'}, status=400)
+
+        # Guardar archivo
+        csv_instance = CSVModel.objects.create(user=request.user, file=file.name)
+        procesar_csv.delay(csv_instance.id)
+
+        return Response({'message': 'Archivo subido y procesamiento iniciado'}, status=201)
 
 
 class LaunchProcessingView(APIView):
