@@ -11,6 +11,7 @@ class CSVUploadSerializer(serializers.ModelSerializer):
         return CSVModel.objects.create(user=user, **validated_data)
 
 
+
 class ProcessRequestSerializer(serializers.Serializer):
     csv_id = serializers.IntegerField()
     target_column = serializers.CharField(max_length=255)

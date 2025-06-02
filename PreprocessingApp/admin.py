@@ -1,9 +1,8 @@
 from django.contrib import admin
 from .models import CSVModel
 
-@admin.register(CSVModel)
 class CSVModelAdmin(admin.ModelAdmin):
-    list_display = ['id', 'user', 'uploaded_at', 'target_column', 'is_ready']
-    list_filter = ['is_ready', 'uploaded_at']
-    search_fields = ['user__username', 'target_column']
+    list_display = ('id', 'user', 'file', 'uploaded_at', 'is_ready')  # Elimina 'target_column' y 'status'
+    list_filter = ('is_ready',)  # Elimina 'status'
 
+admin.site.register(CSVModel, CSVModelAdmin)
