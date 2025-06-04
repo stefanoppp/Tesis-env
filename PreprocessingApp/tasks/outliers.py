@@ -1,22 +1,27 @@
 from celery import shared_task
 from .base_imports import *
+from io import StringIO
 
 @shared_task
-def preprocesar_outliers(csv_id, df_serialized):
+def preprocesar_outliers(df_serialized):
     try:
-        logger.info(f"Iniciando eliminación de outliers para CSV ID: {csv_id}")
-        
-        df = pd.DataFrame(df_serialized)
+        logger.info(f"Iniciando eliminación de outliers")
 
-        # Eliminar outliers
+        # Convertir el DataFrame serializado de nuevo a DataFrame
+        df = pd.read_json(StringIO(df_serialized), orient='split')
+
+        # Calcular Z-score para encontrar outliers
         z_scores = stats.zscore(df.select_dtypes(include=['float64', 'int64']))
-        df_cleaned = df[(abs(z_scores) < 3).all(axis=1)]  # Filtra los outliers
+        df_cleaned = df[(abs(z_scores) < 3).all(axis=1)]  # Eliminar outliers (valores con z-score > 3)
 
-        logger.info(f"Eliminación de outliers completada para CSV ID: {csv_id}")
+        # Registrar las columnas y el tamaño después de la eliminación de outliers
+        logger.info(f"Eliminacón de outliers completada con éxito")
 
-        return df_cleaned.to_dict()  # Pasar el resultado a la siguiente tarea
+        # Devolver el DataFrame limpio después de eliminar los outliers
+        return df_cleaned.to_json(orient='split')  # Devuelve el DataFrame limpio en formato JSON
 
     except Exception as e:
-        logger.error(f"Error en eliminación de outliers para CSV ID {csv_id}: {str(e)}")
-        raise Exception(f"Error en eliminación de outliers para CSV ID {csv_id}")
+        logger.error(f"Error en eliminación de outliers: {str(e)}")
+        raise Exception("Error en eliminación de outliers")
+
 

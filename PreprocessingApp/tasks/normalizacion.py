@@ -1,20 +1,27 @@
 from celery import shared_task
 from .base_imports import *
+from io import StringIO
 
 @shared_task
-def preprocesar_normalizacion(csv_id, df_serialized):
+def preprocesar_normalizacion(df_serialized):
     try:
-        logger.info(f"Iniciando normalización para CSV ID: {csv_id}")
-        
-        df = pd.DataFrame(df_serialized)
+        logger.info(f"Iniciando normalización de datos")
 
-        # Normalización de los datos
-        df[df.select_dtypes(include=['float64', 'int64']).columns] = StandardScaler().fit_transform(df[df.select_dtypes(include=['float64', 'int64']).columns])
+        # Convertir el DataFrame serializado de nuevo a DataFrame
+        df = pd.read_json(StringIO(df_serialized), orient='split')
 
-        logger.info(f"Normalización completada para CSV ID: {csv_id}")
+        # Normalización de los datos: escalar los valores
+        df_normalized = df.copy()
+        numeric_columns = df_normalized.select_dtypes(include=['float64', 'int64']).columns
+        df_normalized[numeric_columns] = StandardScaler().fit_transform(df_normalized[numeric_columns])
 
-        return df.to_dict()  # Pasar el resultado a la siguiente tarea
+        # Registrar las columnas y el tamaño después de la normalización
+        logger.info(f"Normalización completada con éxito")
+
+        # Devolver el DataFrame normalizado
+        return df_normalized.to_json(orient='split')  # Devuelve el DataFrame normalizado en formato JSON
 
     except Exception as e:
-        logger.error(f"Error en normalización para CSV ID {csv_id}: {str(e)}")
-        raise Exception(f"Error en normalización para CSV ID {csv_id}")
+        logger.error(f"Error en normalización de datos: {str(e)}")
+        raise Exception("Error en normalización de datos")
+
