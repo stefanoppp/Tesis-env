@@ -9,7 +9,7 @@ from ..utils import get_user_directory_path
 import pandas as pd
 import os
 from io import StringIO
-
+import sys
 @shared_task
 def finalizar_procesamiento(df_json, csv_id):
     """Tarea final que guarda el archivo procesado"""
@@ -50,9 +50,10 @@ def finalizar_procesamiento(df_json, csv_id):
         try:
             obj = CSVModel.objects.get(id=csv_id)
             obj.is_ready = False
+            obj.error_message = str(e)  # <-- Linea agregada del testing
             obj.save()
-        except:
-            pass
+        except Exception as inner_e:
+            logger.error(f"Error guardando mensaje de error: {inner_e}")
         raise
 
 @shared_task(bind=True)
@@ -68,7 +69,10 @@ def procesar_csv(self, csv_id):
             preprocesar_normalizacion.s(),
             finalizar_procesamiento.s(csv_id)  # Añadir CSV ID como parámetro
         )
-
+        if 'test' in sys.argv:
+            task_chain.apply()
+        else:
+            task_chain.apply_async()
         # Ejecutar cadena de forma asíncrona
         task_chain.apply_async()
         
@@ -77,4 +81,11 @@ def procesar_csv(self, csv_id):
 
     except Exception as e:
         logger.error(f"Error al iniciar procesamiento para CSV ID {csv_id}: {str(e)}")
+        try:
+            obj = CSVModel.objects.get(id=csv_id)
+            obj.is_ready = False
+            obj.error_message = str(e)
+            obj.save()
+        except Exception as inner_e:
+            logger.error(f"Error guardando mensaje de error en procesar_csv: {inner_e}")
         return None
