@@ -6,6 +6,13 @@ class CSVUploadSerializer(serializers.ModelSerializer):
         model = CSVModel
         fields = ['file']
 
+    def validate_file(self, value):
+        user = self.context['request'].user
+        file_name = value.name
+        if CSVModel.objects.filter(user=user, file__endswith=file_name).exists():
+            raise serializers.ValidationError("Ya has subido un archivo con ese nombre.")
+        return value
+
     def create(self, validated_data):
         user = self.context['request'].user
         return CSVModel.objects.create(user=user, **validated_data)
@@ -24,9 +31,6 @@ class CSVResultSerializer(serializers.ModelSerializer):
             'id',
             'target_column',
             'processed_file',
-            'report_image_outliers',
-            'report_image_distribution',
-            'report_image_missing',
             'is_ready',
             'error_message',
         ]

@@ -15,7 +15,7 @@ services:
 
   celery:
     build: .
-    command: celery -A backend worker --loglevel=info
+    command: celery -A backend worker --loglevel=info --pool=solo  #Simplicidad en desarrollo. Posible cambio a prod
     volumes:
       - .:/app
     depends_on:

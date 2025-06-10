@@ -27,12 +27,7 @@ def finalizar_procesamiento(df_json, csv_id):
         
         # Convertir JSON a DataFrame
         df_final = pd.read_json(StringIO(df_json), orient='split')
-        
-        # Guardar archivo original en directorio del proyecto
-        original_file_path = os.path.join(project_directory, f'original_{os.path.basename(obj.file.name)}')
-        df_original = pd.read_csv(obj.file.path)
-        df_original.to_csv(original_file_path, index=False)
-        
+    
         # Guardar archivo procesado (desde el JSON que viene de las tareas)
         processed_file_path = os.path.join(project_directory, f'processed_{os.path.basename(obj.file.name)}')
         df_final.to_csv(processed_file_path, index=False)

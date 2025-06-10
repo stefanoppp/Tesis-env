@@ -75,16 +75,3 @@ class PreProcessor:
         plt.close(figure)
         return base64.b64encode(buf.getvalue()).decode('utf-8')
     
-    def save_images(self, outliers_img, dist_img, missing_img):
-        """Guarda las imágenes generadas en el sistema de archivos (o base de datos si es necesario)"""
-        image_folder = os.path.join(settings.MEDIA_ROOT, 'images')
-        if not os.path.exists(image_folder):
-            os.makedirs(image_folder)
-
-        # Guardar las imágenes como archivos .png
-        with open(os.path.join(image_folder, 'outliers.png'), 'wb') as f:
-            f.write(base64.b64decode(outliers_img))
-        with open(os.path.join(image_folder, 'distributions.png'), 'wb') as f:
-            f.write(base64.b64decode(dist_img))
-        with open(os.path.join(image_folder, 'missing.png'), 'wb') as f:
-            f.write(base64.b64decode(missing_img))

@@ -144,9 +144,6 @@ REDIS_2FA_MAX_ATTEMPTS = 3
 # -----
 #--------------------------------Preprocessing APP
 
-import os
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
