@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    command: gunicorn backend.wsgi:application --bind 0.0.0.0:8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+    environment:
+      - CELERY_BROKER=redis://redis:6379/0
+
+  celery:
+    build: .
+    command: celery -A backend worker --loglevel=info
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+    environment:
+      - CELERY_BROKER=redis://redis:6379/0
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
