@@ -7,3 +7,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+/*.db
+db.sqlite3
+/csv_uploads
+/.vscode
