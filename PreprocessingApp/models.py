@@ -20,11 +20,12 @@ class CSVModel(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='csvs')
     file = models.FileField(upload_to=user_directory_path)  # Archivo CSV original
     uploaded_at = models.DateTimeField(auto_now_add=True)
-
     processed_file = models.FileField(upload_to=user_directory_path, blank=True, null=True)  # Archivo procesado
-
     is_ready = models.BooleanField(default=False)
     error_message = models.TextField(blank=True, null=True)
+    # --------------Datos para la siguiente aplicacion-------------
+    processing_type = models.TextField(blank=True, null=True)
+    target_column= models.TextField(blank=True, null=True) 
 
     def __str__(self):
         return f"CSV de {self.user.username} - {self.uploaded_at.date()}"

@@ -4,7 +4,7 @@ from .models import CSVModel
 class CSVUploadSerializer(serializers.ModelSerializer):
     class Meta:
         model = CSVModel
-        fields = ['file']
+        fields = ['file', 'processing_type', 'target_column'] #Campos para ver los resultados correctamente
 
     def validate_file(self, value):
         user = self.context['request'].user

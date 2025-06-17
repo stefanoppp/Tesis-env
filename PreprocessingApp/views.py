@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
-
+import pandas as pd
 from .models import CSVModel
 from .serializers import CSVUploadSerializer, ProcessRequestSerializer, CSVResultSerializer
 from .tasks.main import procesar_csv
@@ -21,6 +21,21 @@ class UploadCSVView(APIView):
         file_name = file.name.split('/')[-1]
         user_folder = os.path.join('csv_uploads', request.user.username, file_name.split('.')[0])
         file_path = os.path.join(user_folder, file_name)
+        processing_type= request.data.get('processing_type')
+        target_column = request.data.get('target_column')
+        print(processing_type, target_column)
+        if not processing_type:
+            return Response({'error': 'Debe proporcionar algún tipo de procesamiento'}, status=400)
+        
+        if not target_column:
+            return Response({'error': 'Debe proporcionar la columna objetivo'}, status=400)
+        try:
+            df = pd.read_csv(file)
+        except Exception:
+            return Response({'error': 'El archivo no es un CSV válido.'}, status=400)
+
+        if target_column not in df.columns:
+            return Response({'error': f'La columna objetivo "{target_column}" no existe en el archivo.'}, status=400)
 
         # Verifica en la base de datos
         if CSVModel.objects.filter(user=request.user, file__endswith=file_name).exists():
@@ -31,7 +46,7 @@ class UploadCSVView(APIView):
             return Response({'error': 'Ya existe un archivo físico con ese nombre. Eliminalo antes de volver a subir.'}, status=400)
 
         # Guardar el archivo en el modelo
-        csv_instance = CSVModel.objects.create(user=request.user, file=file)
+        csv_instance = CSVModel.objects.create(user=request.user, file=file, target_column=target_column, processing_type=processing_type)
 
         # Llamar a Celery para procesar el archivo
         task = procesar_csv.apply_async(args=[csv_instance.id])

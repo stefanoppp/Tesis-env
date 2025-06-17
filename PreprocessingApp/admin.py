@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import CSVModel
 
 class CSVModelAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'file', 'uploaded_at', 'is_ready')
+    list_display = ('id', 'user', 'file', 'uploaded_at', 'is_ready', 'processing_type', 'target_column')
     list_filter = ('is_ready',)
 
     def delete_model(self, request, obj):
