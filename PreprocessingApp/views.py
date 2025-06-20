@@ -18,17 +18,26 @@ class UploadCSVView(APIView):
         if not file:
             return Response({'error': 'No se proporcionó ningún archivo CSV'}, status=400)
 
-        file_name = file.name.split('/')[-1]
-        user_folder = os.path.join('csv_uploads', request.user.username, file_name.split('.')[0])
-        file_path = os.path.join(user_folder, file_name)
-        processing_type= request.data.get('processing_type')
+        # Validar extensión
+        if not file.name.lower().endswith('.csv'):
+            return Response({'error': 'El archivo debe ser un CSV'}, status=400)
+
+        # Carpeta: csv_uploads/<user>/<csv_name>/
+        csv_name = os.path.splitext(file.name)[0]
+        user_folder = os.path.join('csv_uploads', request.user.username, csv_name)
+        os.makedirs(user_folder, exist_ok=True)
+        file_path = os.path.join(user_folder, 'csv_original.csv')
+
+        processing_type = request.data.get('processing_type')
         target_column = request.data.get('target_column')
-        print(processing_type, target_column)
+        drop_column = request.data.get('drop_column')  # opcional
+
         if not processing_type:
             return Response({'error': 'Debe proporcionar algún tipo de procesamiento'}, status=400)
-        
         if not target_column:
             return Response({'error': 'Debe proporcionar la columna objetivo'}, status=400)
+
+        # Leer el archivo para validar el target y eliminar columna si corresponde
         try:
             df = pd.read_csv(file)
         except Exception:
@@ -37,28 +46,38 @@ class UploadCSVView(APIView):
         if target_column not in df.columns:
             return Response({'error': f'La columna objetivo "{target_column}" no existe en el archivo.'}, status=400)
 
-        # Verifica en la base de datos
-        if CSVModel.objects.filter(user=request.user, file__endswith=file_name).exists():
-            return Response({'error': 'Ya subiste este archivo antes'}, status=400)
+        # Eliminar la columna si el usuario la especifica y existe
+        if drop_column:
+            if drop_column in df.columns:
+                df = df.drop(columns=[drop_column])
+            else:
+                return Response({'error': f'La columna a suprimir "{drop_column}" no existe en el archivo.'}, status=400)
 
-        # Verifica en el sistema de archivos
-        if os.path.exists(file_path):
-            return Response({'error': 'Ya existe un archivo físico con ese nombre. Eliminalo antes de volver a subir.'}, status=400)
+        # Verifica si el usuario ya subió un archivo con el mismo nombre original
+        if CSVModel.objects.filter(user=request.user, original_filename=file.name).exists():
+            return Response({'error': 'Ya subiste un archivo con ese nombre antes'}, status=400)
 
-        # Guardar el archivo en el modelo
-        csv_instance = CSVModel.objects.create(user=request.user, file=file, target_column=target_column, processing_type=processing_type)
+        # Guarda el DataFrame (ya recortado si corresponde) en el sistema de archivos
+        df.to_csv(file_path, index=False)
 
-        # Llamar a Celery para procesar el archivo
-        task = procesar_csv.apply_async(args=[csv_instance.id])
+        # Crea el modelo CSVModel
+        csv_instance = CSVModel.objects.create(
+            user=request.user,
+            file=file_path,  # Guarda la ruta, no el archivo
+            target_column=target_column,
+            processing_type=processing_type,
+            drop_column=drop_column if drop_column else None,
+            original_filename=file.name,
+        )
+
+        # Lanza la tarea de preprocesamiento
+        task = procesar_csv.apply_async(args=[csv_instance.id, drop_column])
 
         return Response({
             'message': 'Archivo subido y procesamiento iniciado',
             'csv_id': csv_instance.id,
             'task_id': task.id
         }, status=201)
-
-
-
 class LaunchProcessingView(APIView):
     permission_classes = [IsAuthenticated]
 

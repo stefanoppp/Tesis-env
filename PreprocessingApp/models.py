@@ -26,7 +26,9 @@ class CSVModel(models.Model):
     # --------------Datos para la siguiente aplicacion-------------
     processing_type = models.TextField(blank=True, null=True)
     target_column= models.TextField(blank=True, null=True) 
-
+                    # Columna opcional a eliminar
+    drop_column = models.TextField(blank=True, null=True)  
+    original_filename = models.CharField(max_length=255, default='')
     def __str__(self):
         return f"CSV de {self.user.username} - {self.uploaded_at.date()}"
 

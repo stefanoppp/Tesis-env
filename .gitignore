@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.pyd
+*.pdb
+*.egg-info/
+*.egg
+*.env
+env/
+venv/
+ENV/
+.venv/
+.Python
+
+# Django
+db.sqlite3
+*.sqlite3
+media/
+staticfiles/
+static/
+local_settings.py
+
+# VSCode
+.vscode/
+.history/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test/coverage
+htmlcov/
+.coverage
+.tox/
+.nox/
+.cache/
+.pytest_cache/
+.coverage.*
+
+# Misc
+*.swp
+*.swo
+
+# Archivos
+csv_uploads/

@@ -19,7 +19,6 @@ def preprocesar_outliers(df_serialized):
 
         # Devolver el DataFrame limpio después de eliminar los outliers
         return df_cleaned.to_json(orient='split')  # Devuelve el DataFrame limpio en formato JSON
-
     except Exception as e:
         logger.error(f"Error en eliminación de outliers: {str(e)}")
         raise Exception("Error en eliminación de outliers")

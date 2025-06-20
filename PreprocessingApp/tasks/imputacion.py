@@ -26,8 +26,8 @@ def preprocesar_imputacion(df_serialized):
 
         logger.info(f"Imputación completada para CSV")
         logger.info(f"Columnas resultantes después de imputación: {df_imputed.columns.tolist()}")
-        return df_imputed.to_json(orient='split')  # Devuelve el DataFrame imputado serializado
-
+        df_serialized = df_imputed.to_json(orient='split')
+        return df_serialized
     except Exception as e:
         logger.error(f"Error en imputación: {str(e)}")
         raise Exception("Error en imputación")

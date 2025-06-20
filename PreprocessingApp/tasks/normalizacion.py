@@ -19,8 +19,8 @@ def preprocesar_normalizacion(df_serialized):
         logger.info(f"Normalización completada con éxito")
 
         # Devolver el DataFrame normalizado
-        return df_normalized.to_json(orient='split')  # Devuelve el DataFrame normalizado en formato JSON
-
+        df_normalized.to_json(orient='split')  # Devuelve el DataFrame normalizado en formato JSON
+        return df_normalized.to_json(orient='split')
     except Exception as e:
         logger.error(f"Error en normalización de datos: {str(e)}")
         raise Exception("Error en normalización de datos")
