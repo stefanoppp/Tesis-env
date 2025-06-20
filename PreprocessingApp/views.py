@@ -30,14 +30,14 @@ class UploadCSVView(APIView):
 
         processing_type = request.data.get('processing_type')
         target_column = request.data.get('target_column')
-        drop_column = request.data.get('drop_column')  # opcional
+        drop_columns = request.data.get('drop_columns')  # Puede ser None, string o lista
 
         if not processing_type:
             return Response({'error': 'Debe proporcionar algún tipo de procesamiento'}, status=400)
         if not target_column:
             return Response({'error': 'Debe proporcionar la columna objetivo'}, status=400)
 
-        # Leer el archivo para validar el target y eliminar columna si corresponde
+        # Leer el archivo para validar el target y eliminar columnas si corresponde
         try:
             df = pd.read_csv(file)
         except Exception:
@@ -46,12 +46,22 @@ class UploadCSVView(APIView):
         if target_column not in df.columns:
             return Response({'error': f'La columna objetivo "{target_column}" no existe en el archivo.'}, status=400)
 
-        # Eliminar la columna si el usuario la especifica y existe
-        if drop_column:
-            if drop_column in df.columns:
-                df = df.drop(columns=[drop_column])
-            else:
-                return Response({'error': f'La columna a suprimir "{drop_column}" no existe en el archivo.'}, status=400)
+        # Normaliza drop_columns a lista
+        if drop_columns is None:
+            drop_columns_list = []
+        elif isinstance(drop_columns, str):
+            drop_columns_list = [col.strip() for col in drop_columns.split(',') if col.strip()]
+        elif isinstance(drop_columns, list):
+            drop_columns_list = drop_columns
+        else:
+            return Response({'error': 'El parámetro drop_columns debe ser una lista o una cadena separada por comas.'}, status=400)
+
+        # Eliminar las columnas si existen
+        not_found = [col for col in drop_columns_list if col not in df.columns]
+        if not_found:
+            return Response({'error': f'Las columnas a suprimir no existen en el archivo: {not_found}'}, status=400)
+        if drop_columns_list:
+            df = df.drop(columns=drop_columns_list)
 
         # Verifica si el usuario ya subió un archivo con el mismo nombre original
         if CSVModel.objects.filter(user=request.user, original_filename=file.name).exists():
@@ -63,15 +73,15 @@ class UploadCSVView(APIView):
         # Crea el modelo CSVModel
         csv_instance = CSVModel.objects.create(
             user=request.user,
-            file=file_path,  # Guarda la ruta, no el archivo
+            file=file_path,
             target_column=target_column,
             processing_type=processing_type,
-            drop_column=drop_column if drop_column else None,
+            drop_column=",".join(drop_columns_list) if drop_columns_list else None,
             original_filename=file.name,
         )
 
-        # Lanza la tarea de preprocesamiento
-        task = procesar_csv.apply_async(args=[csv_instance.id, drop_column])
+        # Lanza la tarea de preprocesamiento SOLO con el id
+        task = procesar_csv.apply_async(args=[csv_instance.id])
 
         return Response({
             'message': 'Archivo subido y procesamiento iniciado',
