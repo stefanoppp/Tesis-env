@@ -9,6 +9,7 @@ from .serializers import CSVUploadSerializer, ProcessRequestSerializer, CSVResul
 from .tasks.main import procesar_csv
 from django.conf import settings
 import os
+from .metrics_utils import calcular_metricas_comparativas_json
 
 class UploadCSVView(APIView):
     permission_classes = [IsAuthenticated]
@@ -148,3 +149,24 @@ class CSVStatusView(APIView):
         except CSVModel.DoesNotExist:
             return Response({'error': 'CSV no encontrado o no pertenece al usuario.'}, status=status.HTTP_404_NOT_FOUND)
 
+class CSVMetricasView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, csv_id):
+        try:
+            csv_instance = CSVModel.objects.get(id=csv_id, user=request.user)
+            path_csv_original = csv_instance.file.path
+            path_csv_preprocesado = csv_instance.processed_file.path
+        except CSVModel.DoesNotExist:
+            return Response({'error': 'CSV no encontrado'}, status=404)
+        except Exception:
+            return Response({'error': 'No se pudo acceder a los archivos'}, status=400)
+
+        # Verifica existencia de ambos archivos
+        if not os.path.exists(path_csv_original):
+            return Response({'error': 'El archivo original no existe.'}, status=404)
+        if not os.path.exists(path_csv_preprocesado):
+            return Response({'error': 'El archivo preprocesado no existe.'}, status=404)
+
+        metricas = calcular_metricas_comparativas_json(path_csv_original, path_csv_preprocesado)
+        return Response(metricas)
