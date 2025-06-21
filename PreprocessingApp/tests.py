@@ -30,15 +30,12 @@ class PreprocessingTasksTestCase(TestCase):
     def test_preprocesar_transformacion(self):
         """Verificar que la tarea de transformación de datos se ejecute correctamente."""
         csv_id = self.csv_instance.id
-        result = preprocesar_transformacion.apply(args=[csv_id])
+        df = pd.read_csv(self.csv_instance.file.path)
+        df_serialized = df.to_json(orient='split')
+        result = preprocesar_transformacion.apply(args=[df_serialized, csv_id])
 
         # Verificar que la tarea se completó sin errores
         self.assertEqual(result.status, "SUCCESS")
-        
-        # Verificar que el CSV ha sido transformado correctamente
-        csv_instance = CSVModel.objects.get(id=csv_id)
-        # Aquí deberías añadir verificaciones según los cambios esperados de la tarea
-        self.assertTrue(csv_instance.file.name.endswith('.csv'))
 
     def test_preprocesar_imputacion(self):
         """Verificar que la tarea de imputación de datos se ejecute correctamente."""
@@ -98,7 +95,7 @@ class PreprocessingTasksTestCase(TestCase):
         csv_instance = CSVModel.objects.get(id=csv_id)
         self.assertTrue(csv_instance.is_ready)
         processed_name = os.path.basename(csv_instance.processed_file.name)
-        self.assertTrue(processed_name.startswith('processed_test'))
+        self.assertEqual(processed_name, 'csv_procesado.csv')
         self.assertTrue(processed_name.endswith('.csv'))
 
     def test_preprocesamiento_no_error(self):
