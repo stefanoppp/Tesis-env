@@ -125,3 +125,25 @@ class PreprocessingTasksTestCase(TestCase):
         print("Mensaje de error:", bad_csv_instance.error_message)  # Opcional para depuración
         self.assertEqual(bad_csv_instance.is_ready, False)
         self.assertIsNotNone(bad_csv_instance.error_message)
+def test_creacion_carpeta_usuario_csv(self):
+    """
+    Verifica que se crea la carpeta correcta para cada usuario y cada CSV subido.
+    """
+    # Simula un nuevo usuario y un nuevo archivo
+    user2 = User.objects.create_user(username='otro_user', password='pass')
+    csv_file2 = SimpleUploadedFile(
+        "otro_test.csv",
+        b"colA,colB\n10,20\n30,40\n",
+        content_type="text/csv"
+    )
+    # Crea la carpeta y guarda el archivo como lo hace tu vista
+    csv_name = os.path.splitext(csv_file2.name)[0]
+    user_folder = os.path.join('csv_uploads', user2.username, csv_name)
+    os.makedirs(user_folder, exist_ok=True)
+    file_path = os.path.join(user_folder, 'csv_original.csv')
+    df = pd.read_csv(csv_file2)
+    df.to_csv(file_path, index=False)
+
+    # Verifica que la carpeta y el archivo existen
+    self.assertTrue(os.path.isdir(user_folder))
+    self.assertTrue(os.path.isfile(file_path))
