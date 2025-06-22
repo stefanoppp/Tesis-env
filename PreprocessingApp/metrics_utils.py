@@ -53,8 +53,8 @@ def contar_outliers(df):
     """
     count = 0
     for col in df.select_dtypes(include=[np.number]).columns:
-        q1 = df[col].quantile(0.2)
-        q3 = df[col].quantile(0.8)
+        q1 = df[col].quantile(0.25)
+        q3 = df[col].quantile(0.75)
         iqr = q3 - q1
         lower = q1 - 1.5 * iqr
         upper = q3 + 1.5 * iqr
@@ -76,8 +76,8 @@ def calcular_informacion_mutua(df, target_column):
     real_target = df.columns[columnas.index(target_column_norm)]
     y = df[real_target]
     X = df.select_dtypes(include=[np.number]).drop(columns=[real_target], errors='ignore')
-    if X.shape[1] == 0 or y.isnull().any():
-        print("No hay columnas numéricas distintas al target o el target tiene nulos.")
+    if df.shape[0] <= 3:
+        print("No se puede calcular información mutua: muy pocas filas tras el preprocesamiento.")
         return {}
     try:
         # Si el target es numérico, usa mutual_info_regression
