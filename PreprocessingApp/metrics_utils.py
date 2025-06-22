@@ -1,7 +1,97 @@
-import pandas as pd
+import os
 import numpy as np
+from sklearn.feature_selection import mutual_info_regression
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+def generar_graficos_distribucion(df, output_dir, sufijo="original"):
+    img_types = {"hist": [], "box": [], "bar": []}
+    os.makedirs(os.path.join(output_dir, "imgs", "hist"), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, "imgs", "box"), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, "imgs", "bar"), exist_ok=True)
 
-def calcular_metricas_comparativas_json(path_csv_original, path_csv_preprocesado):
+    for col in df.columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            # Histograma
+            plt.figure()
+            sns.histplot(df[col].dropna(), kde=True)
+            plt.title(f"Histograma de {col} ({sufijo})")
+            hist_path = os.path.join(output_dir, "imgs", "hist", f"{col}_{sufijo}.png")
+            plt.savefig(hist_path)
+            plt.close()
+            img_types["hist"].append(hist_path)
+
+            # Boxplot
+            plt.figure()
+            sns.boxplot(x=df[col].dropna())
+            plt.title(f"Boxplot de {col} ({sufijo})")
+            box_path = os.path.join(output_dir, "imgs", "box", f"{col}_{sufijo}.png")
+            plt.savefig(box_path)
+            plt.close()
+            img_types["box"].append(box_path)
+        elif pd.api.types.is_categorical_dtype(df[col]) or df[col].dtype == object or pd.api.types.is_bool_dtype(df[col]):
+            # Barplot para categóricas y booleanas
+            plt.figure()
+            df[col].value_counts().plot(kind='bar')
+            plt.title(f"Barplot de {col} ({sufijo})")
+            bar_path = os.path.join(output_dir, "imgs", "bar", f"{col}_{sufijo}.png")
+            plt.savefig(bar_path)
+            plt.close()
+            img_types["bar"].append(bar_path)
+    return img_types
+def max_abs_correlation(df):
+    num_df = df.select_dtypes(include=[np.number])
+    if num_df.shape[1] < 2:
+        return None  # No hay correlación si hay menos de 2 columnas numéricas
+    corr = num_df.corr().abs()
+    np.fill_diagonal(corr.values, 0)  # Ignora la diagonal
+    return float(corr.max().max())
+
+def contar_outliers(df):
+    """
+    Cuenta outliers usando el criterio de 1.5*IQR para todas las columnas numéricas.
+    """
+    count = 0
+    for col in df.select_dtypes(include=[np.number]).columns:
+        q1 = df[col].quantile(0.2)
+        q3 = df[col].quantile(0.8)
+        iqr = q3 - q1
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+        count += ((df[col] < lower) | (df[col] > upper)).sum()
+    return int(count)
+
+
+from sklearn.feature_selection import mutual_info_regression, mutual_info_classif
+from sklearn.preprocessing import LabelEncoder
+
+def calcular_informacion_mutua(df, target_column):
+    print("Columnas del DataFrame:", list(df.columns))
+    print("Target column recibido:", repr(target_column))
+    columnas = [str(col).strip() for col in df.columns]
+    target_column_norm = target_column.strip()
+    if target_column_norm not in columnas:
+        print(f"ERROR: La columna objetivo '{target_column}' no está en el DataFrame. Columnas: {columnas}")
+        return {}
+    real_target = df.columns[columnas.index(target_column_norm)]
+    y = df[real_target]
+    X = df.select_dtypes(include=[np.number]).drop(columns=[real_target], errors='ignore')
+    if X.shape[1] == 0 or y.isnull().any():
+        print("No hay columnas numéricas distintas al target o el target tiene nulos.")
+        return {}
+    try:
+        # Si el target es numérico, usa mutual_info_regression
+        if pd.api.types.is_numeric_dtype(y):
+            mi = mutual_info_regression(X.fillna(0), y)
+        else:
+            # Si es categórico, lo codifica y usa mutual_info_classif
+            y_encoded = LabelEncoder().fit_transform(y.astype(str))
+            mi = mutual_info_classif(X.fillna(0), y_encoded)
+        return {col: float(val) for col, val in zip(X.columns, mi)}
+    except Exception as e:
+        print("Error en mutual_info:", e)
+        return {}
+def calcular_metricas_comparativas_json(path_csv_original, path_csv_preprocesado,target_column):
     df_orig = pd.read_csv(path_csv_original)
     df_proc = pd.read_csv(path_csv_preprocesado)
 
@@ -25,20 +115,14 @@ def calcular_metricas_comparativas_json(path_csv_original, path_csv_preprocesado
         "Std Deviation Error": {
             "csv_normal": float(df_orig.select_dtypes(include=[np.number]).std().mean()),
             "csv_preprocesado": float(df_proc.select_dtypes(include=[np.number]).std().mean())
+        },
+        "Máxima correlación absoluta": {
+            "csv_normal": max_abs_correlation(df_orig),
+            "csv_preprocesado": max_abs_correlation(df_proc)
+        },
+        "Info mutua": {
+            "csv_normal": calcular_informacion_mutua(df_orig, target_column),
+            "csv_preprocesado": calcular_informacion_mutua(df_proc, target_column)
         }
     }
     return metricas
-
-def contar_outliers(df):
-    """
-    Cuenta outliers usando el criterio de 1.5*IQR para todas las columnas numéricas.
-    """
-    count = 0
-    for col in df.select_dtypes(include=[np.number]).columns:
-        q1 = df[col].quantile(0.25)
-        q3 = df[col].quantile(0.75)
-        iqr = q3 - q1
-        lower = q1 - 1.5 * iqr
-        upper = q3 + 1.5 * iqr
-        count += ((df[col] < lower) | (df[col] > upper)).sum()
-    return int(count)
