@@ -4,41 +4,9 @@ from sklearn.feature_selection import mutual_info_regression
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
-def generar_graficos_distribucion(df, output_dir, sufijo="original"):
-    img_types = {"hist": [], "box": [], "bar": []}
-    os.makedirs(os.path.join(output_dir, "imgs", "hist"), exist_ok=True)
-    os.makedirs(os.path.join(output_dir, "imgs", "box"), exist_ok=True)
-    os.makedirs(os.path.join(output_dir, "imgs", "bar"), exist_ok=True)
 
-    for col in df.columns:
-        if pd.api.types.is_numeric_dtype(df[col]):
-            # Histograma
-            plt.figure()
-            sns.histplot(df[col].dropna(), kde=True)
-            plt.title(f"Histograma de {col} ({sufijo})")
-            hist_path = os.path.join(output_dir, "imgs", "hist", f"{col}_{sufijo}.png")
-            plt.savefig(hist_path)
-            plt.close()
-            img_types["hist"].append(hist_path)
-
-            # Boxplot
-            plt.figure()
-            sns.boxplot(x=df[col].dropna())
-            plt.title(f"Boxplot de {col} ({sufijo})")
-            box_path = os.path.join(output_dir, "imgs", "box", f"{col}_{sufijo}.png")
-            plt.savefig(box_path)
-            plt.close()
-            img_types["box"].append(box_path)
-        elif pd.api.types.is_categorical_dtype(df[col]) or df[col].dtype == object or pd.api.types.is_bool_dtype(df[col]):
-            # Barplot para categóricas y booleanas
-            plt.figure()
-            df[col].value_counts().plot(kind='bar')
-            plt.title(f"Barplot de {col} ({sufijo})")
-            bar_path = os.path.join(output_dir, "imgs", "bar", f"{col}_{sufijo}.png")
-            plt.savefig(bar_path)
-            plt.close()
-            img_types["bar"].append(bar_path)
-    return img_types
+from sklearn.feature_selection import mutual_info_regression, mutual_info_classif
+from sklearn.preprocessing import LabelEncoder
 def max_abs_correlation(df):
     num_df = df.select_dtypes(include=[np.number])
     if num_df.shape[1] < 2:
@@ -60,11 +28,6 @@ def contar_outliers(df):
         upper = q3 + 1.5 * iqr
         count += ((df[col] < lower) | (df[col] > upper)).sum()
     return int(count)
-
-
-from sklearn.feature_selection import mutual_info_regression, mutual_info_classif
-from sklearn.preprocessing import LabelEncoder
-
 def calcular_informacion_mutua(df, target_column):
     print("Columnas del DataFrame:", list(df.columns))
     print("Target column recibido:", repr(target_column))

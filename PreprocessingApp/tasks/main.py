@@ -4,6 +4,7 @@ from PreprocessingApp.tasks.transformacion import preprocesar_transformacion
 from PreprocessingApp.tasks.imputacion import preprocesar_imputacion
 from PreprocessingApp.tasks.outliers import preprocesar_outliers
 from PreprocessingApp.tasks.normalizacion import preprocesar_normalizacion
+from PreprocessingApp.tasks.registros_duplicados import preprocesar_duplicados
 from celery import chain
 from PreprocessingApp.models import CSVModel
 import pandas as pd
@@ -56,6 +57,7 @@ def procesar_csv(self, csv_id, drop_column=None):
         # Crear cadena de tareas
         task_chain = chain(
             preprocesar_transformacion.s(df_json, csv_id),
+            preprocesar_duplicados.s(),
             preprocesar_imputacion.s(),
             preprocesar_outliers.s(),
             preprocesar_normalizacion.s(),

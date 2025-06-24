@@ -7,8 +7,7 @@ from .models import CSVModel
 from .serializers import ProcessRequestSerializer
 from .tasks.main import procesar_csv
 from django.conf import settings
-from .metrics_utils import calcular_metricas_comparativas_json
-from .metrics_utils import generar_graficos_distribucion
+from .utils.metrics_utils import calcular_metricas_comparativas_json
 import pandas as pd
 class UploadCSVView(APIView):
     permission_classes = [IsAuthenticated]
@@ -174,7 +173,7 @@ class CSVMetricasView(APIView):
 
         metricas = calcular_metricas_comparativas_json(path_csv_original, path_csv_preprocesado,csv_instance.target_column)
         return Response(metricas)
-    
+from .utils.graph_utils import generar_graficos_calidad_comparativo
 class CSVImagesView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -182,28 +181,25 @@ class CSVImagesView(APIView):
         try:
             csv_instance = CSVModel.objects.get(id=csv_id, user=request.user)
             base_dir = os.path.dirname(csv_instance.file.path)
-            img_dir = os.path.join(base_dir, "imgs")
-            # Verifica si ya existen imágenes
+            img_dir = os.path.join(base_dir, "imgs", "calidad")
             need_generate = not os.path.exists(img_dir) or not any(os.scandir(img_dir))
+
             if need_generate:
-                # Generar imágenes para original
                 df_orig = pd.read_csv(csv_instance.file.path)
-                generar_graficos_distribucion(df_orig, base_dir, sufijo="original")
-                # Generar imágenes para preprocesado si existe
                 if hasattr(csv_instance, "processed_file") and csv_instance.processed_file and os.path.exists(csv_instance.processed_file.path):
                     df_proc = pd.read_csv(csv_instance.processed_file.path)
-                    generar_graficos_distribucion(df_proc, base_dir, sufijo="preprocesado")
-            # Recopila las URLs de las imágenes
-            images = {}
-            for tipo in ["hist", "box", "bar"]:
-                tipo_dir = os.path.join(img_dir, tipo)
-                images[tipo] = []
-                if os.path.exists(tipo_dir):
-                    for fname in os.listdir(tipo_dir):
-                        if fname.endswith(".png"):
-                            rel_path = os.path.relpath(os.path.join(tipo_dir, fname), settings.MEDIA_ROOT)
-                            url = request.build_absolute_uri('/' + rel_path.replace("\\", "/"))
-                            images[tipo].append(url)
-            return Response(images)
+                else:
+                    df_proc = df_orig.copy()  # Si no hay archivo procesado, compara con sí mismo
+                generar_graficos_calidad_comparativo(df_orig, df_proc, base_dir)
+
+            images = []
+            for fname in os.listdir(img_dir):
+                if fname.endswith(".png"):
+                    rel_path = os.path.relpath(os.path.join(img_dir, fname), settings.MEDIA_ROOT)
+                    url = request.build_absolute_uri('/' + rel_path.replace("\\", "/"))
+                    images.append(url)
+
+            return Response({'images': images})
+
         except CSVModel.DoesNotExist:
             return Response({'error': 'CSV no encontrado'}, status=404)
