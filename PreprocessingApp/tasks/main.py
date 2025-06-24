@@ -45,22 +45,28 @@ def procesar_csv(self, csv_id, drop_column=None):
     try:
         logger.info(f"Iniciando tarea principal para CSV ID: {csv_id}")
         obj = CSVModel.objects.get(id=csv_id)
+        
         # Cargar el DataFrame original
         df = pd.read_csv(obj.file.path)
-        # Eliminar la columna si corresponde (por seguridad, aunque ya se hizo en la vista)
+        
+        # Eliminar columnas si corresponde
         if drop_column and drop_column in df.columns:
-            logger.info(f"Eliminando columna {drop_column} del DataFrame en tarea principal")
+            logger.info(f"Eliminando columna {drop_column} del DataFrame")
             df = df.drop(columns=[drop_column])
-        # Convertir el DataFrame a JSON para pasarlo a la siguiente tarea
+        
+        # Obtener target_column del modelo
+        target_column = obj.target_column
+        
+        # Convertir el DataFrame a JSON
         df_json = df.to_json(orient='split')
 
-        # Crear cadena de tareas
+        # Crear cadena de tareas PASANDO target_column desde el primer paso
         task_chain = chain(
-            preprocesar_transformacion.s(df_json, csv_id),
+            preprocesar_transformacion.s(df_json, csv_id, target_column),  # ← AGREGAR target_column
             preprocesar_duplicados.s(),
             preprocesar_imputacion.s(),
             preprocesar_outliers.s(),
-            preprocesar_normalizacion.s(),
+            preprocesar_normalizacion.s(target_column),
             finalizar_procesamiento.s(csv_id)
         )
 
@@ -80,5 +86,5 @@ def procesar_csv(self, csv_id, drop_column=None):
             obj.error_message = str(e)
             obj.save()
         except Exception as inner_e:
-            logger.error(f"Error guardando mensaje de error en procesar_csv: {inner_e}")
+            logger.error(f"Error guardando mensaje de error: {inner_e}")
         return None

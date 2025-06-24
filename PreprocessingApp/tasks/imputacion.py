@@ -2,32 +2,35 @@ from celery import shared_task
 import pandas as pd
 from .base_imports import *
 from sklearn.impute import SimpleImputer
-
-import pandas as pd
+import numpy as np
 from io import StringIO
 
 @shared_task
 def preprocesar_imputacion(df_serialized):
     try:
-        logger.info(f"Iniciando imputación de valores faltantes")
+        logger.info("Iniciando imputación de valores faltantes")
 
-        # Convertir el string JSON en un objeto 'archivo' para evitar el FutureWarning
         df = pd.read_json(StringIO(df_serialized), orient='split')
+        logger.info(f"DataFrame shape: {df.shape}")
 
-        # Imputación de valores faltantes
-        numeric_columns = df.select_dtypes(include=['float64', 'int64']).columns
-        df_clean = df[numeric_columns]
-
-        imputer = SimpleImputer(strategy='mean')
-        df_imputed = df_clean.copy()
+        # Trabajar con TODAS las columnas numéricas (incluidas categóricas)
+        numeric_columns = df.select_dtypes(include=[np.number]).columns
         
-        # Aplicar la imputación y reemplazar en el DataFrame original
-        df_imputed[numeric_columns] = imputer.fit_transform(df_clean)
+        if len(numeric_columns) == 0:
+            logger.info("No hay columnas numéricas para imputar")
+            return df.to_json(orient='split')
 
-        logger.info(f"Imputación completada para CSV")
-        logger.info(f"Columnas resultantes después de imputación: {df_imputed.columns.tolist()}")
-        df_serialized = df_imputed.to_json(orient='split')
-        return df_serialized
+        df_imputed = df.copy()
+        
+        # Imputar valores faltantes con mediana (mejor para categóricas numéricas)
+        imputer = SimpleImputer(strategy='median')
+        df_imputed[numeric_columns] = imputer.fit_transform(df[numeric_columns])
+
+        logger.info("Imputación completada")
+        logger.info(f"Columnas procesadas: {numeric_columns.tolist()}")
+        
+        return df_imputed.to_json(orient='split')
+        
     except Exception as e:
         logger.error(f"Error en imputación: {str(e)}")
         raise Exception("Error en imputación")
