@@ -24,7 +24,8 @@ INSTALLED_APPS = [
 
     # Propias
     'UsersApp',
-    "PreprocessingApp"
+    "PreprocessingApp",
+    'AIModelsApp'
 ]
 
 # === MIDDLEWARE ===
