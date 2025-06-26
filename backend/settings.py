@@ -24,8 +24,7 @@ INSTALLED_APPS = [
 
     # Propias
     'UsersApp',
-    "PreprocessingApp",
-    'AIModelsApp'
+    'MLPlatformApp',
 ]
 
 # === MIDDLEWARE ===
@@ -143,27 +142,3 @@ REDIS_2FA_MAX_ATTEMPTS = 3
 # Para testear las pruebas de cada app, supone la de users, se hace asi: python manage.py test UsersApp
 # Por ultimo Django, el server de Django
 # -----
-#--------------------------------Preprocessing APP
-
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {
-        'console': {
-            'level': 'INFO',
-            'class': 'logging.StreamHandler',
-        },
-    },
-    'loggers': {
-        'django': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': True,
-        },
-        'PreprocessingApp': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-    },
-}
