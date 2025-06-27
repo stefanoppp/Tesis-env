@@ -5,92 +5,77 @@ from django.utils import timezone
 from .models import AIModel, PredictionLog
 from .training import train_model_task
 import pandas as pd
-
+import os
+import tempfile
+import os
+import logging
 class CreateModelView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
         try:
-            # Validar archivo CSV
+            # 1. VALIDAR ARCHIVO CSV
             if 'file' not in request.FILES:
                 return Response({'error': 'CSV file is required'}, status=400)
             
             csv_file = request.FILES['file']
             df = pd.read_csv(csv_file)
             
-            # Obtener parámetros
-            target_column = request.data['target_column']
-            ignore_columns = request.data.get('ignore_columns', '')
-            is_public = request.data.get('is_public', 'false').lower() == 'true'  # Convertir string a bool
-            model_name = request.data['name']
-            
-            print(f"DEBUG: model_name={model_name}, is_public={is_public}")
-            
-            # Validar que target_column existe
+            # 2. OBTENER PARÁMETROS BÁSICOS
+            model_name = request.data.get('name')
+            target_column = request.data.get('target_column')
+            task_type = request.data.get('task_type')
+            ignored_columns = request.data.get('ignored_columns', [])
+            # Parametros aparte
+            is_public = request.data.get('is_public')
+            # 3. VALIDACIONES MÍNIMAS
+            if not model_name:
+                return Response({'error': 'name is required'}, status=400)
+            if not target_column:
+                return Response({'error': 'target_column is required'}, status=400)
+            if not task_type or task_type not in ['classification', 'regression']:
+                return Response({'error': 'task_type must be "classification" or "regression"'}, status=400)
             if target_column not in df.columns:
-                return Response({
-                    'error': f'Target column "{target_column}" not found',
-                    'available_columns': list(df.columns)
-                }, status=400)
+                return Response({'error': f'Target column "{target_column}" not found'}, status=400)
             
-            # VALIDAR NOMBRE SEGÚN VISIBILIDAD
-            if is_public:
-                # Para público: verificar que no exista ningún modelo público con ese nombre
-                existing_public = AIModel.objects.filter(name=model_name, is_public=True)
-                print(f"DEBUG: Found {existing_public.count()} public models with name '{model_name}'")
-                if existing_public.exists():
-                    return Response({
-                        'error': f'A public model with name "{model_name}" already exists',
-                        'suggestion': f'Try "{model_name}_v2" or choose a different name',
-                        'existing_models': [{'id': str(m.id), 'owner': m.user.username} for m in existing_public]
-                    }, status=400)
-            else:
-                # Para privado: verificar solo en modelos del usuario
-                existing_private = AIModel.objects.filter(user=request.user, name=model_name)
-                print(f"DEBUG: Found {existing_private.count()} private models for user {request.user.username} with name '{model_name}'")
-                if existing_private.exists():
-                    return Response({
-                        'error': f'You already have a model named "{model_name}"',
-                        'suggestion': f'Try "{model_name}_v2" or choose a different name',
-                        'existing_models': [{'id': str(m.id), 'created_at': m.created_at} for m in existing_private]
-                    }, status=400)
-            
-            # Procesar columnas a ignorar
-            ignored_list = []
-            if ignore_columns:
-                ignored_list = [col.strip() for col in ignore_columns.split(',') if col.strip()]
-            
-            # Obtener features (todas excepto target e ignoradas)
-            features_list = [col for col in df.columns 
-                           if col != target_column and col not in ignored_list]
-            
-            # Crear modelo
+            # 4. CREAR MODELO EN BD
             ai_model = AIModel.objects.create(
                 user=request.user,
                 name=model_name,
-                description=request.data.get('description', ''),
-                task_type=request.data['task_type'],
-                dataset_name=csv_file.name,
+                task_type=task_type,
                 target_column=target_column,
-                features_list=features_list,
+                dataset_name=csv_file.name,
                 is_public=is_public,
+                description=request.data.get('description', ''),
             )
             
-            # Convertir DataFrame a dict para pasarlo a Celery
-            df_cleaned = df.drop(columns=ignored_list, errors='ignore')
-            csv_data = df_cleaned.to_dict('records')
+            # 5. GUARDAR CSV TEMPORALMENTE - SOLUCIÓN PRINCIPAL
+            csv_file.seek(0)
             
-            # Lanzar task de entrenamiento
-            train_model_task.delay(str(ai_model.id), csv_data, ai_model.name)
+            # Crear directorio temporal para el usuario
+            temp_dir = f"media/temp/{request.user.username}/"
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # Guardar archivo CSV con nombre único
+            temp_csv_path = f"{temp_dir}{ai_model.id}.csv"
+            with open(temp_csv_path, 'wb+') as destination:
+                for chunk in csv_file.chunks():
+                    destination.write(chunk)
+            
+            # 6. LANZAR ENTRENAMIENTO con ruta del archivo
+            train_model_task.delay(
+                model_id=str(ai_model.id),
+                csv_file_path=temp_csv_path,  # Pasar ruta en lugar de datos
+                target_column=target_column,
+                ignored_columns=ignored_columns,
+                task_type=task_type,
+            )
             
             return Response({
                 'id': str(ai_model.id),
                 'message': 'Model training started',
-                'status': ai_model.status,
-                'is_public': is_public,
-                'features': features_list,
-                'ignored_columns': ignored_list,
-                'dataset_shape': df.shape
+                'name': model_name,
+                'status': 'pending'
             }, status=201)
             
         except Exception as e:
@@ -307,3 +292,181 @@ class DeleteModelView(APIView):
             return Response({'error': 'Model not found'}, status=404)
         except Exception as e:
             return Response({'error': str(e)}, status=500)
+        
+class PublicModelsView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            # Obtener todos los modelos públicos completados
+            public_models = AIModel.objects.filter(is_public=True, status='completed')
+            
+            models_data = []
+            for model in public_models:
+                # Contar predicciones totales del modelo
+                total_predictions = PredictionLog.objects.filter(ai_model=model).count()
+                
+                # Contar usuarios únicos que han usado el modelo
+                unique_users = PredictionLog.objects.filter(ai_model=model).values('user').distinct().count()
+                
+                # Verificar si el usuario actual ya usó este modelo hoy
+                today = timezone.now().date()
+                today_start = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
+                user_predictions_today = PredictionLog.objects.filter(
+                    ai_model=model,
+                    user=request.user,
+                    created_at__gte=today_start
+                ).count()
+                
+                models_data.append({
+                    'id': str(model.id),
+                    'name': model.name,
+                    'description': model.description,
+                    'owner': model.user.username,
+                    'task_type': model.task_type,
+                    'dataset_name': model.dataset_name,
+                    'target_column': model.target_column,
+                    'features_count': len(model.features_list),
+                    'features_list': model.features_list,
+                    'created_at': model.created_at,
+                    'statistics': {
+                        'total_predictions': total_predictions,
+                        'unique_users': unique_users,
+                        'user_predictions_today': user_predictions_today,
+                        'remaining_predictions': 10 - user_predictions_today
+                    }
+                })
+            
+            return Response({
+                'count': len(models_data),
+                'public_models': models_data
+            })
+            
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
+        
+class ModelInfoView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, model_id):
+        try:
+            # Obtener modelo (privado o público)
+            ai_model = None
+            is_owner = False
+            
+            try:
+                ai_model = AIModel.objects.get(id=model_id, user=request.user)
+                is_owner = True
+            except AIModel.DoesNotExist:
+                try:
+                    ai_model = AIModel.objects.get(id=model_id, is_public=True)
+                    is_owner = False
+                except AIModel.DoesNotExist:
+                    return Response({'error': 'Model not found'}, status=404)
+            
+            if ai_model.status != 'completed':
+                return Response({'error': 'Model not ready', 'status': ai_model.status}, status=400)
+            
+            # DATOS BÁSICOS
+            response = {
+                'model_id': str(ai_model.id),
+                'model_name': ai_model.name,
+                'task_type': ai_model.task_type,
+                'owner': ai_model.user.username,
+                'is_owner': is_owner,
+                
+                # PARÁMETROS REQUERIDOS
+                'required_features': ai_model.features_list,
+                'target_column': ai_model.target_column,
+                
+                # MÉTRICAS + INTERPRETACIÓN
+                'metrics': self._get_metrics(ai_model)
+            }
+            
+            # RATE LIMIT (solo para modelos públicos)
+            if not is_owner and ai_model.is_public:
+                today = timezone.now().date()
+                today_start = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
+                used_today = PredictionLog.objects.filter(
+                    ai_model=ai_model, user=request.user, created_at__gte=today_start
+                ).count()
+                
+                response['remaining_predictions'] = 10 - used_today
+            
+            return Response(response)
+            
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
+    
+    def _get_metrics(self, ai_model):
+        """Obtener métricas guardadas durante entrenamiento"""
+        try:
+            # LEER MÉTRICAS DESDE LA BASE DE DATOS
+            if ai_model.model_metrics and len(ai_model.model_metrics) > 0:
+                logging.info(f"Loading metrics from database for model {ai_model.id}")
+                return ai_model.model_metrics
+            else:
+                logging.warning(f"No metrics found in database for model {ai_model.id}")
+                return {
+                    'error': 'No metrics available - model may have been trained before metrics feature',
+                    'model_type': 'unknown',
+                    'available': False,
+                    'note': 'Train a new model to get detailed metrics'
+                }
+                
+        except Exception as e:
+            logging.error(f"Error reading metrics from database: {str(e)}")
+            return {
+                'error': f'Error loading metrics: {str(e)}',
+                'model_type': 'unknown',
+                'available': False
+            }
+    
+    def _extract_classification_metrics(self, df, model):
+        """Métricas de clasificación"""
+        try:
+            metrics = {
+                'model_type': type(model).__name__,
+                'accuracy': round(float(df.iloc[0]['Accuracy']), 4),
+                'precision': round(float(df.iloc[0]['Prec.']), 4),
+                'recall': round(float(df.iloc[0]['Recall']), 4),
+                'f1_score': round(float(df.iloc[0]['F1']), 4),
+                'auc': round(float(df.iloc[0]['AUC']), 4) if 'AUC' in df.columns else None,
+            }
+            
+            # INTERPRETACIÓN SIMPLE
+            acc = metrics['accuracy']
+            metrics['interpretation'] = {
+                'accuracy_level': 'Excelente' if acc >= 0.9 else 'Muy Bueno' if acc >= 0.8 else 'Bueno' if acc >= 0.7 else 'Regular',
+                'model_quality': 'Alta' if acc >= 0.85 else 'Media' if acc >= 0.7 else 'Baja',
+                'reliability': f'{int(acc*100)}% de precisión'
+            }
+            
+            return metrics
+            
+        except Exception as e:
+            return {'error': f'Classification metrics error: {str(e)}'}
+    
+    def _extract_regression_metrics(self, df, model):
+        """Métricas de regresión"""
+        try:
+            metrics = {
+                'model_type': type(model).__name__,
+                'r2': round(float(df.iloc[0]['R2']), 4),
+                'mae': round(float(df.iloc[0]['MAE']), 4),
+                'rmse': round(float(df.iloc[0]['RMSE']), 4),
+                'mape': round(float(df.iloc[0]['MAPE']), 4) if 'MAPE' in df.columns else None,
+            }
+            
+            # INTERPRETACIÓN SIMPLE
+            r2 = metrics['r2']
+            metrics['interpretation'] = {
+                'fit_quality': 'Excelente' if r2 >= 0.9 else 'Muy Bueno' if r2 >= 0.8 else 'Bueno' if r2 >= 0.7 else 'Regular',
+                'variance_explained': f'{int(r2*100)}% de la varianza explicada',
+                'prediction_accuracy': 'Alta' if r2 >= 0.8 else 'Media' if r2 >= 0.6 else 'Baja'
+            }
+            
+            return metrics
+            
+        except Exception as e:
+            return {'error': f'Regression metrics error: {str(e)}'}

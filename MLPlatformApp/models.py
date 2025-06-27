@@ -14,7 +14,8 @@ class AIModel(models.Model):
         ('classification', 'Classification'),
         ('regression', 'Regression')
     ])
-    
+    # Metricas. Inicialmente vacío, se llenará al completar el entrenamiento
+    model_metrics = models.JSONField(default=dict, blank=True)
     # Metadatos del dataset (sin almacenar archivo)
     dataset_name = models.CharField(max_length=200)
     target_column = models.CharField(max_length=100)
