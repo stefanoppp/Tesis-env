@@ -26,20 +26,63 @@ class CreateModelView(APIView):
             target_column = request.data.get('target_column')
             task_type = request.data.get('task_type')
             
-            # ACEPTAR AMBOS NOMBRES DE CAMPO PARA IGNORED_COLUMNS
-            ignored_columns = (
-                request.data.get('ignored_columns', []) or 
-                request.data.get('ignore_columns', [])
-            )
+            # DEBUGGING COMPLETO PARA VER QUÉ LLEGA
+            raw_ignored_1 = request.data.get('ignored_columns')
+            raw_ignored_2 = request.data.get('ignore_columns')
             
-            # Asegurar que sea una lista
-            if isinstance(ignored_columns, str):
-                ignored_columns = [ignored_columns] if ignored_columns else []
+            logging.info(f"=== DEBUGGING IGNORED COLUMNS ===")
+            logging.info(f"ignored_columns field: {raw_ignored_1} (type: {type(raw_ignored_1)})")
+            logging.info(f"ignore_columns field: {raw_ignored_2} (type: {type(raw_ignored_2)})")
+            logging.info(f"Full request.data: {dict(request.data)}")
+            
+            # Usar el que no sea None
+            raw_ignored = raw_ignored_1 if raw_ignored_1 is not None else raw_ignored_2
+            
+            # PROCESAR SEGÚN EL TIPO
+            if raw_ignored is None or raw_ignored == "":
+                ignored_columns = []
+                logging.info("ignored_columns is None or empty")
+            elif isinstance(raw_ignored, list):
+                ignored_columns = [str(col).strip() for col in raw_ignored if str(col).strip()]
+                logging.info(f"Processed as list: {ignored_columns}")
+            elif isinstance(raw_ignored, str):
+                import json
+                raw_ignored = raw_ignored.strip()
+                
+                # Intentar JSON
+                if raw_ignored.startswith('[') and raw_ignored.endswith(']'):
+                    try:
+                        parsed = json.loads(raw_ignored)
+                        if isinstance(parsed, list):
+                            ignored_columns = [str(col).strip() for col in parsed if str(col).strip()]
+                        else:
+                            ignored_columns = [str(parsed).strip()] if str(parsed).strip() else []
+                        logging.info(f"Parsed JSON successfully: {ignored_columns}")
+                    except json.JSONDecodeError as e:
+                        logging.error(f"Failed to parse JSON: {raw_ignored}, error: {e}")
+                        ignored_columns = []
+                # String separado por comas
+                elif ',' in raw_ignored:
+                    ignored_columns = [col.strip() for col in raw_ignored.split(',') if col.strip()]
+                    logging.info(f"Processed as comma-separated: {ignored_columns}")
+                # String simple no vacío
+                elif raw_ignored:
+                    ignored_columns = [raw_ignored]
+                    logging.info(f"Processed as single string: {ignored_columns}")
+                else:
+                    ignored_columns = []
+                    logging.info("String is empty after strip")
+            else:
+                ignored_columns = []
+                logging.error(f"Unknown type for ignored_columns: {type(raw_ignored)}")
+            
+            # Limpiar la lista final
+            ignored_columns = [col for col in ignored_columns if col and isinstance(col, str)]
             
             # Parámetros adicionales
             is_public = request.data.get('is_public', False)
             
-            logging.info(f"Ignored columns received from frontend: {ignored_columns}")
+            logging.info(f"Final ignored_columns: {ignored_columns}")
             
             # 3. VALIDACIONES MÍNIMAS
             if not model_name:
@@ -57,7 +100,9 @@ class CreateModelView(APIView):
                 if invalid_cols:
                     return Response({
                         'error': f'Ignored columns not found in dataset: {invalid_cols}',
-                        'available_columns': list(df.columns)
+                        'available_columns': list(df.columns),
+                        'processed_ignored_columns': ignored_columns,
+                        'raw_input': str(raw_ignored)
                     }, status=400)
             
             # 4. CREAR MODELO EN BD
@@ -97,10 +142,16 @@ class CreateModelView(APIView):
                 'id': str(ai_model.id),
                 'message': 'Model training started',
                 'name': model_name,
-                'status': 'pending'
+                'status': 'pending',
+                'debug_info': {
+                    'raw_ignored_input': str(raw_ignored),
+                    'processed_ignored_columns': ignored_columns,
+                    'input_type': str(type(raw_ignored))
+                }
             }, status=201)
             
         except Exception as e:
+            logging.error(f"CreateModelView error: {str(e)}")
             return Response({'error': str(e)}, status=400)
 
 class ModelStatusView(APIView):
