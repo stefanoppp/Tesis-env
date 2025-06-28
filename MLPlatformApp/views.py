@@ -7,8 +7,8 @@ from .training import train_model_task
 import pandas as pd
 import os
 import tempfile
-import os
 import logging
+
 class CreateModelView(APIView):
     permission_classes = [IsAuthenticated]
     
@@ -25,9 +25,22 @@ class CreateModelView(APIView):
             model_name = request.data.get('name')
             target_column = request.data.get('target_column')
             task_type = request.data.get('task_type')
-            ignored_columns = request.data.get('ignored_columns', [])
-            # Parametros aparte
-            is_public = request.data.get('is_public')
+            
+            # ACEPTAR AMBOS NOMBRES DE CAMPO PARA IGNORED_COLUMNS
+            ignored_columns = (
+                request.data.get('ignored_columns', []) or 
+                request.data.get('ignore_columns', [])
+            )
+            
+            # Asegurar que sea una lista
+            if isinstance(ignored_columns, str):
+                ignored_columns = [ignored_columns] if ignored_columns else []
+            
+            # Parámetros adicionales
+            is_public = request.data.get('is_public', False)
+            
+            logging.info(f"Ignored columns received from frontend: {ignored_columns}")
+            
             # 3. VALIDACIONES MÍNIMAS
             if not model_name:
                 return Response({'error': 'name is required'}, status=400)
@@ -37,6 +50,15 @@ class CreateModelView(APIView):
                 return Response({'error': 'task_type must be "classification" or "regression"'}, status=400)
             if target_column not in df.columns:
                 return Response({'error': f'Target column "{target_column}" not found'}, status=400)
+            
+            # Validar que las columnas a ignorar existan
+            if ignored_columns:
+                invalid_cols = [col for col in ignored_columns if col not in df.columns]
+                if invalid_cols:
+                    return Response({
+                        'error': f'Ignored columns not found in dataset: {invalid_cols}',
+                        'available_columns': list(df.columns)
+                    }, status=400)
             
             # 4. CREAR MODELO EN BD
             ai_model = AIModel.objects.create(
@@ -49,7 +71,7 @@ class CreateModelView(APIView):
                 description=request.data.get('description', ''),
             )
             
-            # 5. GUARDAR CSV TEMPORALMENTE - SOLUCIÓN PRINCIPAL
+            # 5. GUARDAR CSV TEMPORALMENTE
             csv_file.seek(0)
             
             # Crear directorio temporal para el usuario
@@ -62,10 +84,10 @@ class CreateModelView(APIView):
                 for chunk in csv_file.chunks():
                     destination.write(chunk)
             
-            # 6. LANZAR ENTRENAMIENTO con ruta del archivo
+            # 6. LANZAR ENTRENAMIENTO
             train_model_task.delay(
                 model_id=str(ai_model.id),
-                csv_file_path=temp_csv_path,  # Pasar ruta en lugar de datos
+                csv_file_path=temp_csv_path,
                 target_column=target_column,
                 ignored_columns=ignored_columns,
                 task_type=task_type,
@@ -86,18 +108,50 @@ class ModelStatusView(APIView):
     
     def get(self, request, model_id):
         try:
-            ai_model = AIModel.objects.get(id=model_id, user=request.user)
+            # Intentar obtener modelo propio primero
+            ai_model = None
+            is_owner = False
             
-            return Response({
+            try:
+                ai_model = AIModel.objects.get(id=model_id, user=request.user)
+                is_owner = True
+            except AIModel.DoesNotExist:
+                # Si no es owner, intentar como público
+                try:
+                    ai_model = AIModel.objects.get(id=model_id, is_public=True)
+                    is_owner = False
+                except AIModel.DoesNotExist:
+                    return Response({'error': 'Model not found or access denied'}, status=404)
+            
+            # Respuesta básica
+            response = {
                 'id': str(ai_model.id),
                 'name': ai_model.name,
                 'status': ai_model.status,
                 'progress': ai_model.progress,
-                'created_at': ai_model.created_at
-            })
+                'created_at': ai_model.created_at,
+                'is_owner': is_owner,
+                'owner': ai_model.user.username,
+                'is_public': ai_model.is_public
+            }
             
-        except AIModel.DoesNotExist:
-            return Response({'error': 'Model not found'}, status=404)
+            # Información adicional solo para owners
+            if is_owner:
+                response.update({
+                    'task_type': ai_model.task_type,
+                    'dataset_name': ai_model.dataset_name,
+                    'target_column': ai_model.target_column,
+                    'description': ai_model.description
+                })
+                
+                # Mostrar errores solo al owner
+                if ai_model.status == 'failed' and hasattr(ai_model, 'error_message'):
+                    response['error_message'] = ai_model.error_message
+            
+            return Response(response)
+            
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
 
 class MyModelsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -161,42 +215,61 @@ class PredictView(APIView):
                     'progress': ai_model.progress
                 }, status=400)
             
-            # RATE LIMITING PARA MODELOS PÚBLICOS
-            if not is_owner and ai_model.is_public:
-                today = timezone.now().date()
-                today_start = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
-                
-                # Contar predicciones del usuario hoy en este modelo
-                predictions_today = PredictionLog.objects.filter(
-                    user=request.user,
-                    ai_model=ai_model,
-                    created_at__gte=today_start
-                ).count()
-                
-                if predictions_today >= 10:  # Límite diario
-                    return Response({
-                        'error': 'Daily prediction limit reached for this public model',
-                        'limit': 10,
-                        'used_today': predictions_today,
-                        'reset_time': 'midnight'
-                    }, status=429)
-            
             # Obtener datos de entrada
             input_data = request.data.get('input_data', {})
             
-            # Validar features
+            # Validar que input_data no esté vacío
+            if not input_data:
+                return Response({
+                    'error': 'Missing input_data in request body',
+                    'required_structure': {
+                        'input_data': {
+                            feature: 'value' for feature in ai_model.features_list[:3]
+                        }
+                    },
+                    'all_required_features': ai_model.features_list,
+                    'note': 'Send a POST request with input_data containing all required features'
+                }, status=400)
+            
+            # Validar features faltantes
             missing_features = set(ai_model.features_list) - set(input_data.keys())
             if missing_features:
+                # Crear ejemplo con valores placeholder
+                example_data = {}
+                for feature in ai_model.features_list:
+                    if feature in input_data:
+                        example_data[feature] = input_data[feature]  # Mantener valores existentes
+                    else:
+                        # Sugerir valores de ejemplo según el nombre
+                        if any(word in feature.lower() for word in ['type', 'class', 'category']):
+                            example_data[feature] = 'example_category'
+                        elif any(word in feature.lower() for word in ['name', 'id']):
+                            example_data[feature] = 'example_name'
+                        elif any(word in feature.lower() for word in ['generation', 'year', 'age']):
+                            example_data[feature] = 1
+                        else:
+                            example_data[feature] = 100  # Valor numérico por defecto
+                
                 return Response({
-                    'error': 'Missing features',
-                    'missing': list(missing_features),
-                    'required_features': ai_model.features_list
+                    'error': 'Missing required features for prediction',
+                    'missing_features': sorted(list(missing_features)),
+                    'features_provided': sorted(list(input_data.keys())) if input_data else [],
+                    'required_request_format': {
+                        'input_data': example_data
+                    },
+                    'instructions': [
+                        '1. Send a POST request to this endpoint',
+                        '2. Include "input_data" in the request body',
+                        '3. Provide values for ALL required features',
+                        f'4. This model needs {len(ai_model.features_list)} features total'
+                    ],
+                    'all_required_features': ai_model.features_list
                 }, status=400)
             
             # Hacer predicción
             result = self._make_prediction(ai_model, input_data)
             
-            # GUARDAR LOG DE PREDICCIÓN
+            # GUARDAR LOG DE PREDICCIÓN (sin validar límites)
             prediction_log = PredictionLog.objects.create(
                 ai_model=ai_model,
                 user=request.user,
@@ -206,17 +279,7 @@ class PredictView(APIView):
                 is_public_model=ai_model.is_public and not is_owner
             )
             
-            # Calcular predicciones restantes solo si no es owner
-            remaining_predictions = None
-            if not is_owner and ai_model.is_public:
-                today = timezone.now().date()
-                today_start = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
-                predictions_today = PredictionLog.objects.filter(
-                    user=request.user,
-                    ai_model=ai_model,
-                    created_at__gte=today_start
-                ).count()
-                remaining_predictions = 10 - predictions_today
+            logging.info(f"Prediction log created: {prediction_log.id} for user {request.user.username}")
             
             return Response({
                 'prediction_id': str(prediction_log.id),
@@ -227,11 +290,11 @@ class PredictView(APIView):
                 'owner': ai_model.user.username,
                 'input_data': input_data,
                 'prediction': result,
-                'task_type': ai_model.task_type,
-                'remaining_predictions': remaining_predictions
+                'task_type': ai_model.task_type
             })
             
         except Exception as e:
+            logging.error(f"PredictView error: {str(e)}")
             return Response({'error': str(e)}, status=500)
     
     def _make_prediction(self, ai_model, input_data):
@@ -292,7 +355,7 @@ class DeleteModelView(APIView):
             return Response({'error': 'Model not found'}, status=404)
         except Exception as e:
             return Response({'error': str(e)}, status=500)
-        
+
 class PublicModelsView(APIView):
     permission_classes = [IsAuthenticated]
     
@@ -303,20 +366,9 @@ class PublicModelsView(APIView):
             
             models_data = []
             for model in public_models:
-                # Contar predicciones totales del modelo
+                # Estadísticas generales del modelo
                 total_predictions = PredictionLog.objects.filter(ai_model=model).count()
-                
-                # Contar usuarios únicos que han usado el modelo
                 unique_users = PredictionLog.objects.filter(ai_model=model).values('user').distinct().count()
-                
-                # Verificar si el usuario actual ya usó este modelo hoy
-                today = timezone.now().date()
-                today_start = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
-                user_predictions_today = PredictionLog.objects.filter(
-                    ai_model=model,
-                    user=request.user,
-                    created_at__gte=today_start
-                ).count()
                 
                 models_data.append({
                     'id': str(model.id),
@@ -331,9 +383,7 @@ class PublicModelsView(APIView):
                     'created_at': model.created_at,
                     'statistics': {
                         'total_predictions': total_predictions,
-                        'unique_users': unique_users,
-                        'user_predictions_today': user_predictions_today,
-                        'remaining_predictions': 10 - user_predictions_today
+                        'unique_users': unique_users
                     }
                 })
             
@@ -344,7 +394,7 @@ class PublicModelsView(APIView):
             
         except Exception as e:
             return Response({'error': str(e)}, status=500)
-        
+
 class ModelInfoView(APIView):
     permission_classes = [IsAuthenticated]
     
@@ -374,28 +424,15 @@ class ModelInfoView(APIView):
                 'task_type': ai_model.task_type,
                 'owner': ai_model.user.username,
                 'is_owner': is_owner,
-                
-                # PARÁMETROS REQUERIDOS
                 'required_features': ai_model.features_list,
                 'target_column': ai_model.target_column,
-                
-                # MÉTRICAS + INTERPRETACIÓN
                 'metrics': self._get_metrics(ai_model)
             }
-            
-            # RATE LIMIT (solo para modelos públicos)
-            if not is_owner and ai_model.is_public:
-                today = timezone.now().date()
-                today_start = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
-                used_today = PredictionLog.objects.filter(
-                    ai_model=ai_model, user=request.user, created_at__gte=today_start
-                ).count()
-                
-                response['remaining_predictions'] = 10 - used_today
             
             return Response(response)
             
         except Exception as e:
+            logging.error(f"ModelInfoView error: {str(e)}")
             return Response({'error': str(e)}, status=500)
     
     def _get_metrics(self, ai_model):
@@ -421,52 +458,3 @@ class ModelInfoView(APIView):
                 'model_type': 'unknown',
                 'available': False
             }
-    
-    def _extract_classification_metrics(self, df, model):
-        """Métricas de clasificación"""
-        try:
-            metrics = {
-                'model_type': type(model).__name__,
-                'accuracy': round(float(df.iloc[0]['Accuracy']), 4),
-                'precision': round(float(df.iloc[0]['Prec.']), 4),
-                'recall': round(float(df.iloc[0]['Recall']), 4),
-                'f1_score': round(float(df.iloc[0]['F1']), 4),
-                'auc': round(float(df.iloc[0]['AUC']), 4) if 'AUC' in df.columns else None,
-            }
-            
-            # INTERPRETACIÓN SIMPLE
-            acc = metrics['accuracy']
-            metrics['interpretation'] = {
-                'accuracy_level': 'Excelente' if acc >= 0.9 else 'Muy Bueno' if acc >= 0.8 else 'Bueno' if acc >= 0.7 else 'Regular',
-                'model_quality': 'Alta' if acc >= 0.85 else 'Media' if acc >= 0.7 else 'Baja',
-                'reliability': f'{int(acc*100)}% de precisión'
-            }
-            
-            return metrics
-            
-        except Exception as e:
-            return {'error': f'Classification metrics error: {str(e)}'}
-    
-    def _extract_regression_metrics(self, df, model):
-        """Métricas de regresión"""
-        try:
-            metrics = {
-                'model_type': type(model).__name__,
-                'r2': round(float(df.iloc[0]['R2']), 4),
-                'mae': round(float(df.iloc[0]['MAE']), 4),
-                'rmse': round(float(df.iloc[0]['RMSE']), 4),
-                'mape': round(float(df.iloc[0]['MAPE']), 4) if 'MAPE' in df.columns else None,
-            }
-            
-            # INTERPRETACIÓN SIMPLE
-            r2 = metrics['r2']
-            metrics['interpretation'] = {
-                'fit_quality': 'Excelente' if r2 >= 0.9 else 'Muy Bueno' if r2 >= 0.8 else 'Bueno' if r2 >= 0.7 else 'Regular',
-                'variance_explained': f'{int(r2*100)}% de la varianza explicada',
-                'prediction_accuracy': 'Alta' if r2 >= 0.8 else 'Media' if r2 >= 0.6 else 'Baja'
-            }
-            
-            return metrics
-            
-        except Exception as e:
-            return {'error': f'Regression metrics error: {str(e)}'}

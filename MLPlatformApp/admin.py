@@ -77,7 +77,7 @@ class AIModelAdmin(admin.ModelAdmin):
 
 @admin.register(PredictionLog)
 class PredictionLogAdmin(admin.ModelAdmin):
-    list_display = ['model_name', 'user', 'is_public_model', 'confidence', 'created_at']
+    list_display = ['model_name', 'user', 'is_public_model', 'confidence', 'created_at','model_owner','date_only']
     list_filter = ['is_public_model', 'created_at', 'ai_model__task_type']
     search_fields = ['ai_model__name', 'user__username']
     readonly_fields = ['id', 'created_at', 'prediction_result', 'input_data']
@@ -102,6 +102,16 @@ class PredictionLogAdmin(admin.ModelAdmin):
         return obj.ai_model.name
     model_name.short_description = 'Model Name'
     model_name.admin_order_field = 'ai_model__name'
+    def model_owner(self, obj):
+        """Mostrar dueño del modelo"""
+        return obj.ai_model.user.username
+    model_owner.short_description = 'Model Owner'
+    model_owner.admin_order_field = 'ai_model__user__username'
+    
+    def date_only(self, obj):
+        """Mostrar solo la fecha para debug"""
+        return obj.created_at.date()
+    date_only.short_description = 'Date'
     
     # Filtros personalizados
     def get_queryset(self, request):
