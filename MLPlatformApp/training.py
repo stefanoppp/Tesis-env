@@ -91,7 +91,7 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
                     'interpretation': {
                         'accuracy_level': 'Excelente' if float(metrics_df.iloc[0]['Accuracy']) >= 0.9 else 'Muy Bueno' if float(metrics_df.iloc[0]['Accuracy']) >= 0.8 else 'Bueno' if float(metrics_df.iloc[0]['Accuracy']) >= 0.7 else 'Regular',
                         'model_quality': 'Alta' if float(metrics_df.iloc[0]['Accuracy']) >= 0.85 else 'Media' if float(metrics_df.iloc[0]['Accuracy']) >= 0.7 else 'Baja',
-                        'reliability': f"{int(float(metrics_df.iloc[0]['Accuracy'])*100)}% de precisión"
+                        'reliability': f"{int(float(metrics_df.iloc[0]['Accuracy'])*100)}% de exactitud"
                     }
                 }
             else:  # regression

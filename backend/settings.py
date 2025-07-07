@@ -138,6 +138,8 @@ REDIS_2FA_MAX_ATTEMPTS = 3
 
 # Primero levantamos el entorno de django, luego Redis con docker container, 
 # luego Celery. Para eso hay que pararse en /tesis y hacer:celery -A backend worker --loglevel=info --pool=solo
+# Sino tambien puede ser: python -m celery -A backend worker --loglevel=info --pool=solo
+
 
 # Para testear las pruebas de cada app, supone la de users, se hace asi: python manage.py test UsersApp
 # Por ultimo Django, el server de Django

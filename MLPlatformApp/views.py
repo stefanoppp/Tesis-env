@@ -414,36 +414,50 @@ class PublicModelsView(APIView):
         try:
             # Obtener todos los modelos públicos completados
             public_models = AIModel.objects.filter(is_public=True, status='completed')
+            logging.info(f"Found {public_models.count()} public models")
             
             models_data = []
             for model in public_models:
-                # Estadísticas generales del modelo
-                total_predictions = PredictionLog.objects.filter(ai_model=model).count()
-                unique_users = PredictionLog.objects.filter(ai_model=model).values('user').distinct().count()
-                
-                models_data.append({
-                    'id': str(model.id),
-                    'name': model.name,
-                    'description': model.description,
-                    'owner': model.user.username,
-                    'task_type': model.task_type,
-                    'dataset_name': model.dataset_name,
-                    'target_column': model.target_column,
-                    'features_count': len(model.features_list),
-                    'features_list': model.features_list,
-                    'created_at': model.created_at,
-                    'statistics': {
-                        'total_predictions': total_predictions,
-                        'unique_users': unique_users
-                    }
-                })
+                try:
+                    # Estadísticas generales del modelo
+                    total_predictions = PredictionLog.objects.filter(ai_model=model).count()
+                    unique_users = PredictionLog.objects.filter(ai_model=model).values('user').distinct().count()
+                    
+                    # Obtener métricas de forma segura
+                    metrics = None
+                    if hasattr(model, 'model_metrics') and model.model_metrics:
+                        metrics = model.model_metrics
+                    
+                    models_data.append({
+                        'id': str(model.id),
+                        'name': model.name,
+                        'description': model.description,
+                        'owner': model.user.username,
+                        'task_type': model.task_type,
+                        'dataset_name': model.dataset_name,
+                        'target_column': model.target_column,
+                        'features_count': len(model.features_list),
+                        'features_list': model.features_list,
+                        'created_at': model.created_at,
+                        'metrics': metrics,
+                        'statistics': {
+                            'total_predictions': total_predictions,
+                            'unique_users': unique_users
+                        }
+                    })
+                    
+                except Exception as model_error:
+                    logging.error(f"Error processing model {model.id}: {str(model_error)}")
+                    continue
             
+            logging.info(f"Successfully processed {len(models_data)} models")
             return Response({
                 'count': len(models_data),
                 'public_models': models_data
             })
             
         except Exception as e:
+            logging.error(f"PublicModelsView error: {str(e)}")
             return Response({'error': str(e)}, status=500)
 
 class ModelInfoView(APIView):
