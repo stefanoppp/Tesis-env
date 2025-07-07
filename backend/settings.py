@@ -1,5 +1,6 @@
 from pathlib import Path
 from decouple import config
+from datetime import timedelta
 # === BASE ===
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -99,8 +100,29 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 }
+
+# Configuración JWT para extensión automática de sesión
 SIMPLE_JWT = {
     'UPDATE_LAST_LOGIN': True,
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),  # Token de acceso válido por 30 minutos
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),     # Refresh token válido por 7 días
+    'ROTATE_REFRESH_TOKENS': True,                   # Rota el refresh token en cada uso
+    'BLACKLIST_AFTER_ROTATION': True,               # Invalida el refresh token anterior
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'VERIFYING_KEY': None,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+}
+
+# Configuración para extensión automática de sesión
+SESSION_EXTENSION_SETTINGS = {
+    'ACTIVITY_TIMEOUT': 15 * 60,          # 15 minutos de inactividad antes de logout
+    'ACTIVITY_CHECK_INTERVAL': 5 * 60,    # Verificar actividad cada 5 minutos
+    'EXTEND_ON_ACTIVITY': True,            # Extender sesión en actividad
 }
 # === CORS ===
 

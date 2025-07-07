@@ -3,8 +3,13 @@ from django.conf import settings
 from django.contrib.auth.models import User
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenRefreshView
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from django.contrib.auth import authenticate
+from django.utils import timezone
+from datetime import timedelta
 from UsersApp.serializers import RegisterSerializer
 from UsersApp.tasks import enviar_token_verificacion
 from UsersApp.utils import get_redis_connection, generar_y_guardar_token
@@ -108,4 +113,178 @@ class LoginView(APIView):
         return Response({
             'refresh': str(refresh),
             'access': str(refresh.access_token),
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+            }
         })
+
+
+class SessionExtendView(APIView):
+    """
+    Vista para extender la sesión del usuario basada en actividad.
+    Renueva el access token si el usuario está activo.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            # Verificar que el usuario esté autenticado
+            user = request.user
+            
+            # Actualizar el último login para tracking de actividad
+            update_last_login(None, user)
+            
+            # Generar nuevo token de acceso
+            refresh = RefreshToken.for_user(user)
+            
+            return Response({
+                'message': 'Sesión extendida exitosamente',
+                'access': str(refresh.access_token),
+                'user_activity': {
+                    'last_activity': timezone.now(),
+                    'session_extended': True
+                }
+            }, status=200)
+            
+        except Exception as e:
+            return Response({
+                'error': 'Error al extender sesión',
+                'detail': str(e)
+            }, status=400)
+
+
+class ActivityHeartbeatView(APIView):
+    """
+    Vista para recibir el heartbeat de actividad del usuario.
+    Se llama periódicamente desde el frontend para mantener la sesión activa.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            user = request.user
+            
+            # Registrar actividad del usuario
+            redis_conn = get_redis_connection()
+            activity_key = f'user_activity:{user.id}'
+            
+            # Guardar timestamp de última actividad
+            activity_data = {
+                'last_activity': timezone.now().isoformat(),
+                'user_id': user.id,
+                'session_active': True
+            }
+            
+            # Guardar en Redis con expiración de 20 minutos (más que el timeout de 15 min)
+            redis_conn.setex(
+                activity_key,
+                20 * 60,  # 20 minutos en segundos
+                json.dumps(activity_data)
+            )
+            
+            return Response({
+                'status': 'activity_recorded',
+                'last_activity': timezone.now(),
+                'session_status': 'active'
+            }, status=200)
+            
+        except Exception as e:
+            return Response({
+                'error': 'Error al registrar actividad',
+                'detail': str(e)
+            }, status=400)
+
+
+class SessionStatusView(APIView):
+    """
+    Vista para verificar el estado de la sesión del usuario.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            user = request.user
+            redis_conn = get_redis_connection()
+            activity_key = f'user_activity:{user.id}'
+            
+            # Verificar última actividad
+            activity_data_raw = redis_conn.get(activity_key)
+            
+            if activity_data_raw:
+                activity_data = json.loads(activity_data_raw)
+                last_activity = timezone.datetime.fromisoformat(activity_data['last_activity'])
+                time_since_activity = timezone.now() - last_activity
+                
+                # Verificar si la sesión debe expirar (15 minutos de inactividad)
+                session_timeout = timedelta(minutes=15)
+                session_expired = time_since_activity > session_timeout
+                
+                return Response({
+                    'session_active': not session_expired,
+                    'last_activity': last_activity,
+                    'time_since_activity_seconds': int(time_since_activity.total_seconds()),
+                    'session_timeout_seconds': int(session_timeout.total_seconds()),
+                    'user': {
+                        'id': user.id,
+                        'username': user.username
+                    }
+                }, status=200)
+            else:
+                return Response({
+                    'session_active': False,
+                    'message': 'No activity data found'
+                }, status=200)
+                
+        except Exception as e:
+            return Response({
+                'error': 'Error al verificar estado de sesión',
+                'detail': str(e)
+            }, status=400)
+
+
+class CustomTokenRefreshView(TokenRefreshView):
+    """
+    Vista personalizada para refresh de tokens que también registra actividad.
+    """
+    
+    def post(self, request, *args, **kwargs):
+        try:
+            # Llamar al método padre para hacer el refresh normal
+            response = super().post(request, *args, **kwargs)
+            
+            if response.status_code == 200:
+                # Si el refresh fue exitoso, obtener el usuario y registrar actividad
+                refresh_token = request.data.get('refresh')
+                if refresh_token:
+                    try:
+                        token = RefreshToken(refresh_token)
+                        user_id = token.payload.get('user_id')
+                        if user_id:
+                            user = User.objects.get(id=user_id)
+                            update_last_login(None, user)
+                            
+                            # Registrar actividad en Redis
+                            redis_conn = get_redis_connection()
+                            activity_key = f'user_activity:{user.id}'
+                            activity_data = {
+                                'last_activity': timezone.now().isoformat(),
+                                'user_id': user.id,
+                                'session_active': True,
+                                'token_refreshed': True
+                            }
+                            redis_conn.setex(activity_key, 20 * 60, json.dumps(activity_data))
+                            
+                    except (TokenError, User.DoesNotExist):
+                        pass  # Si hay error, continuar con el response normal
+            
+            return response
+            
+        except Exception as e:
+            return Response({
+                'error': 'Error al renovar token',
+                'detail': str(e)
+            }, status=400)
