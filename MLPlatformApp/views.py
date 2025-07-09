@@ -407,6 +407,168 @@ class DeleteModelView(APIView):
         except Exception as e:
             return Response({'error': str(e)}, status=500)
 
+class DeleteMultipleModelsView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    # Límites de operaciones masivas
+    MAX_MODELS_PER_REQUEST = 100
+    
+    def _delete_model_files(self, models_queryset):
+        """Eliminar archivos físicos de modelos de forma segura"""
+        files_deleted = 0
+        files_failed = 0
+        deleted_files = []
+        failed_files = []
+        
+        for model in models_queryset:
+            if model.model_path and os.path.exists(model.model_path):
+                try:
+                    os.remove(model.model_path)
+                    files_deleted += 1
+                    deleted_files.append({
+                        'path': model.model_path,
+                        'model_name': model.name,
+                        'model_id': str(model.id)
+                    })
+                    logging.info(f"BULK_DELETE: Successfully deleted file: {model.model_path} for model {model.name}")
+                except OSError as e:
+                    files_failed += 1
+                    failed_files.append({
+                        'path': model.model_path,
+                        'model_name': model.name,
+                        'model_id': str(model.id),
+                        'error': str(e)
+                    })
+                    logging.error(f"BULK_DELETE: Failed to delete file {model.model_path} for model {model.name}: {e}")
+        
+        return {
+            'files_deleted': files_deleted,
+            'files_failed': files_failed,
+            'deleted_files': deleted_files,
+            'failed_files': failed_files,
+            'total_files': files_deleted + files_failed
+        }
+
+    def _bulk_delete_logic(self, request, method_used='DELETE'):
+        """Lógica común para eliminación múltiple"""
+        import time
+        start_time = time.time()
+        
+        try:
+            # Obtener array de IDs desde el body de la petición
+            model_ids = request.data.get('model_ids', [])
+            
+            if not model_ids:
+                return Response({
+                    'error': 'model_ids array is required',
+                    'error_code': 'BULK_001'
+                }, status=400)
+            
+            if not isinstance(model_ids, list):
+                return Response({
+                    'error': 'model_ids must be an array',
+                    'error_code': 'BULK_001'
+                }, status=400)
+            
+            if len(model_ids) == 0:
+                return Response({
+                    'error': 'At least one model ID is required',
+                    'error_code': 'BULK_001'
+                }, status=400)
+            
+            # Verificar límites de operación masiva
+            if len(model_ids) > self.MAX_MODELS_PER_REQUEST:
+                return Response({
+                    'error': f'Cannot delete more than {self.MAX_MODELS_PER_REQUEST} models at once',
+                    'error_code': 'BULK_004',
+                    'max_allowed': self.MAX_MODELS_PER_REQUEST
+                }, status=400)
+            
+            if not isinstance(model_ids, list):
+                return Response({'error': 'model_ids must be an array'}, status=400)
+            
+            if len(model_ids) == 0:
+                return Response({'error': 'At least one model ID is required'}, status=400)
+            
+            # Obtener modelos que pertenecen al usuario
+            models_to_delete = AIModel.objects.filter(
+                id__in=model_ids, 
+                user=request.user
+            )
+            
+            # Verificar que todos los IDs pertenecen al usuario
+            found_ids = set(str(model.id) for model in models_to_delete)
+            requested_ids = set(str(id) for id in model_ids)
+            not_found_ids = requested_ids - found_ids
+            
+            if not_found_ids:
+                return Response({
+                    'error': 'Some models not found or access denied',
+                    'error_code': 'BULK_003',
+                    'not_found_ids': list(not_found_ids),
+                    'found_count': len(found_ids)
+                }, status=404)
+            
+            # Recopilar nombres antes de eliminar
+            deleted_models = []
+            for model in models_to_delete:
+                deleted_models.append({
+                    'id': str(model.id),
+                    'name': model.name
+                })
+            
+            # IMPORTANTE: Eliminar archivos físicos ANTES de la eliminación en BD
+            files_cleanup_result = self._delete_model_files(models_to_delete)
+            
+            # Eliminar todos los modelos de la base de datos
+            deleted_count = models_to_delete.count()
+            models_to_delete.delete()
+            
+            # Calcular duración de la operación
+            duration_ms = int((time.time() - start_time) * 1000)
+            
+            # Log de auditoría con información de archivos
+            logging.info(f"BULK_DELETE: User {request.user.username} ({request.user.id}) "
+                        f"deleted {deleted_count} models using {method_used} method. "
+                        f"Duration: {duration_ms}ms. Files deleted: {files_cleanup_result['files_deleted']}, "
+                        f"Files failed: {files_cleanup_result['files_failed']}. "
+                        f"Models: {[m['name'] for m in deleted_models]}")
+            
+            # Preparar respuesta con headers adicionales
+            response_data = {
+                'message': f'Successfully deleted {deleted_count} models',
+                'deleted_count': deleted_count,
+                'deleted_models': deleted_models,
+                'method_used': method_used,
+                'duration_ms': duration_ms,
+                'files_cleanup': files_cleanup_result
+            }
+            
+            response = Response(response_data)
+            response['X-Delete-Method'] = method_used
+            response['X-Bulk-Operation'] = 'true'
+            response['X-Operation-Count'] = str(deleted_count)
+            
+            return response
+            
+        except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            logging.error(f"BULK_DELETE ERROR: User {request.user.username} ({request.user.id}) "
+                         f"failed bulk delete using {method_used}. Duration: {duration_ms}ms. Error: {str(e)}")
+            return Response({
+                'error': str(e),
+                'error_code': 'BULK_005',
+                'method_used': method_used
+            }, status=500)
+    
+    def delete(self, request):
+        """Método DELETE - Semánticamente correcto pero con limitaciones de compatibilidad"""
+        return self._bulk_delete_logic(request, method_used='DELETE')
+    
+    def post(self, request):
+        """Método POST - Fallback para máxima compatibilidad"""
+        return self._bulk_delete_logic(request, method_used='POST')
+
 class PublicModelsView(APIView):
     permission_classes = [IsAuthenticated]
     
