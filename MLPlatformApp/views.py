@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
+from django.core.paginator import Paginator
 from .models import AIModel, PredictionLog
 from .training import train_model_task
 import pandas as pd
@@ -209,11 +210,26 @@ class MyModelsView(APIView):
     
     def get(self, request):
         try:
-            # Obtener todos los modelos del usuario autenticado
-            models = AIModel.objects.filter(user=request.user)
+            # Obtener parámetros de paginación
+            page = int(request.GET.get('page', 1))
+            page_size = int(request.GET.get('page_size', 15))
+            
+            # Obtener todos los modelos del usuario autenticado ordenados por fecha
+            models_queryset = AIModel.objects.filter(user=request.user).order_by('-created_at')
+            
+            # Aplicar paginación
+            paginator = Paginator(models_queryset, page_size)
+            
+            # Validar que la página solicitada existe
+            if page > paginator.num_pages:
+                page = paginator.num_pages
+            if page < 1:
+                page = 1
+                
+            models_page = paginator.get_page(page)
             
             models_data = []
-            for model in models:
+            for model in models_page:
                 models_data.append({
                     'id': str(model.id),
                     'name': model.name,
@@ -230,7 +246,14 @@ class MyModelsView(APIView):
                 })
             
             return Response({
-                'count': len(models_data),
+                'count': paginator.count,  # Total de modelos
+                'num_pages': paginator.num_pages,  # Total de páginas
+                'current_page': page,  # Página actual
+                'page_size': page_size,  # Tamaño de página
+                'has_next': models_page.has_next(),  # Si hay página siguiente
+                'has_previous': models_page.has_previous(),  # Si hay página anterior
+                'next_page': page + 1 if models_page.has_next() else None,
+                'previous_page': page - 1 if models_page.has_previous() else None,
                 'models': models_data
             })
             
@@ -574,12 +597,31 @@ class PublicModelsView(APIView):
     
     def get(self, request):
         try:
-            # Obtener todos los modelos públicos completados
-            public_models = AIModel.objects.filter(is_public=True, status='completed')
-            logging.info(f"Found {public_models.count()} public models")
+            # Obtener parámetros de paginación
+            page = int(request.GET.get('page', 1))
+            page_size = int(request.GET.get('page_size', 15))
+            
+            # Obtener todos los modelos públicos completados ordenados por fecha
+            public_models_queryset = AIModel.objects.filter(
+                is_public=True, 
+                status='completed'
+            ).order_by('-created_at')
+            
+            logging.info(f"Found {public_models_queryset.count()} public models")
+            
+            # Aplicar paginación
+            paginator = Paginator(public_models_queryset, page_size)
+            
+            # Validar que la página solicitada existe
+            if page > paginator.num_pages:
+                page = paginator.num_pages
+            if page < 1:
+                page = 1
+                
+            models_page = paginator.get_page(page)
             
             models_data = []
-            for model in public_models:
+            for model in models_page:
                 try:
                     # Estadísticas generales del modelo
                     total_predictions = PredictionLog.objects.filter(ai_model=model).count()
@@ -614,7 +656,14 @@ class PublicModelsView(APIView):
             
             logging.info(f"Successfully processed {len(models_data)} models")
             return Response({
-                'count': len(models_data),
+                'count': paginator.count,  # Total de modelos públicos
+                'num_pages': paginator.num_pages,  # Total de páginas
+                'current_page': page,  # Página actual
+                'page_size': page_size,  # Tamaño de página
+                'has_next': models_page.has_next(),  # Si hay página siguiente
+                'has_previous': models_page.has_previous(),  # Si hay página anterior
+                'next_page': page + 1 if models_page.has_next() else None,
+                'previous_page': page - 1 if models_page.has_previous() else None,
                 'public_models': models_data
             })
             
