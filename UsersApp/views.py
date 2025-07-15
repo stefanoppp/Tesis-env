@@ -34,8 +34,7 @@ class RegisterView(APIView):
             response = {'message': 'Usuario creado correctamente. Verificá tu correo.'}
 
             token = generar_y_guardar_token(user)
-            if settings.USE_CELERY_FOR_2FA:
-                enviar_token_verificacion.delay(user.id, token)
+            enviar_token_verificacion(user.id, token)
             if settings.DEBUG:
                 response['dev_token'] = token
 

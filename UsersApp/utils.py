@@ -3,7 +3,8 @@ import json
 import random
 from django.conf import settings
 
-
+from django.conf import settings
+r = redis.StrictRedis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=settings.REDIS_DB)
 def get_redis_connection():
     return redis.Redis(
         host=settings.REDIS_HOST,

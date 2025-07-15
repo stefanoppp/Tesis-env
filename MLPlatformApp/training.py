@@ -6,7 +6,7 @@ import os
 
 logger = logging.getLogger(__name__)
 
-@shared_task(bind=True)
+@shared_task(bind=True,queue="training")
 def train_model_task(self, model_id, csv_file_path, target_column, ignored_columns, task_type):
     """Task corregida para entrenar modelo con PyCaret y guardar métricas"""
     ai_model = None
@@ -58,6 +58,7 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
             categorical_imputation="mode",
             normalize=True,
             verbose=False,
+            n_jobs=-1,
             session_id=123
         ) 
         logger.info("PyCaret setup completed successfully")

@@ -1,13 +1,21 @@
 from pathlib import Path
 from decouple import config
 from datetime import timedelta
+import os
 # === BASE ===
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = "django-insecure-xsx2oij5v@hrne9%2vq$1ow&k(y4_nxw0qzz&vd)_92+ccwr68"
 DEBUG = True
 ALLOWED_HOSTS = []
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')  # Donde Django guarda los archivos con collectstatic
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'static'),  # Carpeta local para desarrollo opcional
+]
 
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media') 
 # === APPS ===
 
 INSTALLED_APPS = [
@@ -89,7 +97,6 @@ USE_TZ = True
 
 # === ARCHIVOS ESTÁTICOS ===
 
-STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -130,15 +137,17 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 # === CELERY ===
 
-CELERY_BROKER_URL = 'redis://localhost:6379/0'
+CELERY_BROKER_URL = "redis://redis:6379/0"
+REDIS_HOST = "redis"
+REDIS_PORT = 6379
+REDIS_DB = 0
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
-USE_CELERY_FOR_2FA = True
 
 
 # === REDIS (para 2FA) ===
 
-REDIS_HOST = 'localhost'
+REDIS_HOST = 'redis'
 REDIS_PORT = 6379
 REDIS_DB = 0
 REDIS_2FA_EXPIRE_SECONDS = 600  # 10 minutos
@@ -149,11 +158,13 @@ REDIS_2FA_MAX_ATTEMPTS = 3
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
+
 EMAIL_HOST_USER = config('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 EMAIL_USE_TLS = True
 REDIS_2FA_MAX_ATTEMPTS = 3
+
 
 # === OPCIONAL: para desarrollo rápido (comentar smtp arriba y descomentar esto) ===
 # EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'

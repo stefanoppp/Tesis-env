@@ -7,6 +7,9 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
 # Crea la instancia de la app Celery
 app = Celery('backend')
 
+app.conf.broker_url = os.environ.get('CELERY_BROKER_URL', 'redis://redis:6379/0')
+app.conf.broker_connection_retry_on_startup = True  # <-- Esto es clave
+
 # Carga la configuración desde settings.py, usando el prefijo CELERY_
 app.config_from_object('django.conf:settings', namespace='CELERY')
 
