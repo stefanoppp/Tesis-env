@@ -292,37 +292,45 @@ class PredictView(APIView):
             # Obtener datos de entrada
             input_data = request.data.get('input_data', {})
             
+            # Extraer nombres de features (manejar tanto strings como objetos)
+            feature_names = []
+            for feature in ai_model.features_list:
+                if isinstance(feature, dict):
+                    feature_names.append(feature.get('name', str(feature)))
+                else:
+                    feature_names.append(str(feature))
+            
             # Validar que input_data no esté vacío
             if not input_data:
                 return Response({
                     'error': 'Missing input_data in request body',
                     'required_structure': {
                         'input_data': {
-                            feature: 'value' for feature in ai_model.features_list[:3]
+                            feature: 'value' for feature in feature_names[:3]
                         }
                     },
-                    'all_required_features': ai_model.features_list,
+                    'all_required_features': feature_names,
                     'note': 'Send a POST request with input_data containing all required features'
                 }, status=400)
             
             # Validar features faltantes
-            missing_features = set(ai_model.features_list) - set(input_data.keys())
+            missing_features = set(feature_names) - set(input_data.keys())
             if missing_features:
                 # Crear ejemplo con valores placeholder
                 example_data = {}
-                for feature in ai_model.features_list:
-                    if feature in input_data:
-                        example_data[feature] = input_data[feature]  # Mantener valores existentes
+                for feature_name in feature_names:
+                    if feature_name in input_data:
+                        example_data[feature_name] = input_data[feature_name]  # Mantener valores existentes
                     else:
                         # Sugerir valores de ejemplo según el nombre
-                        if any(word in feature.lower() for word in ['type', 'class', 'category']):
-                            example_data[feature] = 'example_category'
-                        elif any(word in feature.lower() for word in ['name', 'id']):
-                            example_data[feature] = 'example_name'
-                        elif any(word in feature.lower() for word in ['generation', 'year', 'age']):
-                            example_data[feature] = 1
+                        if any(word in feature_name.lower() for word in ['type', 'class', 'category']):
+                            example_data[feature_name] = 'example_category'
+                        elif any(word in feature_name.lower() for word in ['name', 'id']):
+                            example_data[feature_name] = 'example_name'
+                        elif any(word in feature_name.lower() for word in ['generation', 'year', 'age']):
+                            example_data[feature_name] = 1
                         else:
-                            example_data[feature] = 100  # Valor numérico por defecto
+                            example_data[feature_name] = 100  # Valor numérico por defecto
                 
                 return Response({
                     'error': 'Missing required features for prediction',
@@ -335,9 +343,9 @@ class PredictView(APIView):
                         '1. Send a POST request to this endpoint',
                         '2. Include "input_data" in the request body',
                         '3. Provide values for ALL required features',
-                        f'4. This model needs {len(ai_model.features_list)} features total'
+                        f'4. This model needs {len(feature_names)} features total'
                     ],
-                    'all_required_features': ai_model.features_list
+                    'all_required_features': feature_names
                 }, status=400)
             
             # Hacer predicción
@@ -368,12 +376,40 @@ class PredictView(APIView):
             })
             
         except Exception as e:
+            import traceback
             logging.error(f"PredictView error: {str(e)}")
+            logging.error(f"PredictView traceback: {traceback.format_exc()}")
+            logging.error(f"PredictView input_data type: {type(input_data)}")
+            logging.error(f"PredictView input_data content: {input_data}")
             return Response({'error': str(e)}, status=500)
     
     def _make_prediction(self, ai_model, input_data):
         """Hacer predicción usando el modelo guardado"""
         import pandas as pd
+        import logging
+        
+        logging.info(f"_make_prediction input_data: {input_data}")
+        logging.info(f"_make_prediction input_data type: {type(input_data)}")
+        
+        # Limpiar y validar input_data
+        cleaned_input = {}
+        for key, value in input_data.items():
+            logging.info(f"Processing key: {key}, value: {value}, type: {type(value)}")
+            # Si el valor es un diccionario, extraer solo el nombre
+            if isinstance(value, dict):
+                if 'name' in value:
+                    cleaned_input[key] = value['name']
+                else:
+                    # Si no tiene 'name', convertir a string
+                    cleaned_input[key] = str(value)
+            elif isinstance(value, (list, tuple)):
+                # Si es una lista o tupla, tomar el primer elemento o convertir a string
+                cleaned_input[key] = value[0] if len(value) > 0 else str(value)
+            else:
+                # Para valores simples (string, int, float), mantener como están
+                cleaned_input[key] = value
+        
+        logging.info(f"_make_prediction cleaned_input: {cleaned_input}")
         
         # Importar según tipo de tarea
         if ai_model.task_type == 'classification':
@@ -384,7 +420,7 @@ class PredictView(APIView):
             model = load_regression_model(ai_model.model_path.replace('.pkl', ''))
         
         # Convertir input a DataFrame
-        input_df = pd.DataFrame([input_data])
+        input_df = pd.DataFrame([cleaned_input])
         
         # Hacer predicción
         prediction = model.predict(input_df)

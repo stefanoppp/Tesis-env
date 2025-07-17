@@ -12,6 +12,13 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
     ai_model = None
     
     try:
+        # Verificar si el modelo existe antes de proceder
+        try:
+            ai_model = AIModel.objects.get(id=model_id)
+        except AIModel.DoesNotExist:
+            logger.error(f"Model with ID {model_id} does not exist. Skipping training.")
+            return {"error": f"Model {model_id} not found", "status": "skipped"}
+        
         ai_model = AIModel.objects.get(id=model_id)
         ai_model.status = 'training'
         ai_model.progress = 10
@@ -148,13 +155,38 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
         save_model(best_model, model_path)
         logger.info(f"Model saved to: {model_path}.pkl")
         
-        # 6. ACTUALIZAR BD CON MÉTRICAS
-        final_features = [col for col in data.columns 
-                        if col != target_column and col not in ignored_columns]
+        # 6. ACTUALIZAR BD CON MÉTRICAS Y TIPOS DE DATOS
+        final_features_names = [col for col in data.columns 
+                               if col != target_column and col not in ignored_columns]
+        
+        # Crear lista con nombres y tipos de datos
+        final_features = []
+        for col in final_features_names:
+            dtype = str(data[col].dtype)
+            # Simplificar tipos de pandas a categorías más generales
+            if dtype.startswith('int') or dtype.startswith('float'):
+                data_type = 'numeric'
+            elif dtype == 'object':
+                # Verificar si es categórico (pocos valores únicos)
+                unique_ratio = data[col].nunique() / len(data)
+                if unique_ratio < 0.1:  # Menos del 10% de valores únicos
+                    data_type = 'categorical'
+                else:
+                    data_type = 'text'
+            elif dtype == 'bool':
+                data_type = 'categorical'
+            else:
+                data_type = 'text'
+            
+            final_features.append({
+                'name': col,
+                'data_type': data_type,
+                'original_dtype': dtype
+            })
 
         logger.info(f"Target column: {target_column}")
         logger.info(f"Ignored columns: {ignored_columns}")
-        logger.info(f"Final features: {final_features}")
+        logger.info(f"Final features with types: {final_features}")
 
         ai_model.model_path = model_path + '.pkl'
         ai_model.features_list = final_features
