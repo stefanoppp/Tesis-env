@@ -85,16 +85,20 @@ class CreateModelView(APIView):
             # Limpiar la lista final
             ignored_columns = [col for col in ignored_columns if col and isinstance(col, str)]
             
-            # Parámetros adicionales
+            # Parámetros adicionales - Procesar is_public correctamente
             raw_is_public = request.data.get('is_public', False)
-            # Convertir string a boolean correctamente
+            
+            # Convertir is_public a booleano de manera robusta
             if isinstance(raw_is_public, str):
-                is_public = raw_is_public.lower() in ['true', '1', 'yes']
+                is_public = raw_is_public.lower() in ['true', '1', 'yes', 'on']
+            elif isinstance(raw_is_public, (int, float)):
+                is_public = bool(raw_is_public)
             else:
                 is_public = bool(raw_is_public)
             
+            logging.info(f"is_public processing: raw='{raw_is_public}' (type: {type(raw_is_public)}) -> processed={is_public}")
+            
             logging.info(f"Final ignored_columns: {ignored_columns}")
-            logging.info(f"Raw is_public: {raw_is_public}, Processed is_public: {is_public}, Type: {type(raw_is_public)}")
             
             # 3. VALIDACIONES MÍNIMAS
             if not model_name:
@@ -145,8 +149,8 @@ class CreateModelView(APIView):
                 # Para modelos públicos: verificar que no exista otro modelo público con el mismo nombre
                 if AIModel.objects.filter(name=model_name, is_public=True).exists():
                     return Response({
-                        'error': f'No puedes crear un modelo público con el nombre "{model_name}" porque ya existe otro modelo público con ese nombre en el repositorio global',
-                        'detail': f'Ya existe un modelo público con el nombre "{model_name}" en el repositorio global. Los modelos públicos deben tener nombres únicos a nivel global.',
+                        'error': f'Ya existe un modelo público con el nombre "{model_name}"',
+                        'detail': f'Ya existe un modelo público con el nombre "{model_name}"',
                         'error_code': 'DUPLICATE_PUBLIC_MODEL_NAME',
                         'error_type': 'validation_error'
                     }, status=400)
@@ -154,8 +158,8 @@ class CreateModelView(APIView):
                 # Para modelos privados: verificar que el usuario no tenga otro modelo privado con el mismo nombre
                 if AIModel.objects.filter(user=request.user, name=model_name, is_public=False).exists():
                     return Response({
-                        'error': f'No puedes crear un modelo privado con el nombre "{model_name}" porque ya tienes otro modelo privado con ese nombre en tu colección personal',
-                        'detail': f'Ya tienes un modelo privado con el nombre "{model_name}" en tu colección personal. Cada modelo privado debe tener un nombre único dentro de tu colección.',
+                        'error': f'Ya tienes un modelo privado con el nombre "{model_name}"',
+                        'detail': f'Ya tienes un modelo privado con el nombre "{model_name}"',
                         'error_code': 'DUPLICATE_PRIVATE_MODEL_NAME',
                         'error_type': 'validation_error'
                     }, status=400)
