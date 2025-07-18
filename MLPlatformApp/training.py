@@ -105,7 +105,7 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
                         'auc_level': 'Excelente discriminación' if 'AUC' in metrics_df.columns and float(metrics_df.iloc[0]['AUC']) >= 0.9 else 'Buena discriminación' if 'AUC' in metrics_df.columns and float(metrics_df.iloc[0]['AUC']) >= 0.8 else 'Discriminación aceptable' if 'AUC' in metrics_df.columns and float(metrics_df.iloc[0]['AUC']) >= 0.7 else 'Pobre discriminación' if 'AUC' in metrics_df.columns else 'No disponible',
                         'model_quality': 'Alta' if float(metrics_df.iloc[0]['Accuracy']) >= 0.8 and float(metrics_df.iloc[0]['F1']) >= 0.8 else 'Media' if float(metrics_df.iloc[0]['Accuracy']) >= 0.7 and float(metrics_df.iloc[0]['F1']) >= 0.7 else 'Baja',
                         'reliability': f"{int(float(metrics_df.iloc[0]['Accuracy'])*100)}% de exactitud global",
-                        'standard_used': 'Sokolova_Lapalme_2009_IEEE'
+                        'standard_used': 'Sokolova Lapalme 2009 IEEE'
                     }
                 }
             else:  # regression
@@ -126,7 +126,7 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
                         'variance_explained': f"{int(float(metrics_df.iloc[0]['R2'])*100)}% de la varianza explicada",
                         'prediction_quality': 'Alta' if float(metrics_df.iloc[0]['R2']) >= 0.8 else 'Media' if float(metrics_df.iloc[0]['R2']) >= 0.5 else 'Baja',
                         'model_strength': 'Muy fuerte' if float(metrics_df.iloc[0]['R2']) >= 0.9 else 'Fuerte' if float(metrics_df.iloc[0]['R2']) >= 0.8 else 'Moderado' if float(metrics_df.iloc[0]['R2']) >= 0.5 else 'Débil',
-                        'standard_used': 'Cohen_1988_Statistical_Power_Analysis'
+                        'standard_used': 'Cohen 1988 Statistical Power Analysis'
                     }
                 }
             

@@ -17,7 +17,12 @@ class CreateModelView(APIView):
         try:
             # 1. VALIDAR ARCHIVO CSV
             if 'file' not in request.FILES:
-                return Response({'error': 'CSV file is required'}, status=400)
+                return Response({
+                    'error': 'Se requiere un archivo CSV',
+                    'detail': 'Se requiere un archivo CSV',
+                    'error_code': 'MISSING_CSV_FILE',
+                    'error_type': 'validation_error'
+                }, status=400)
             
             csv_file = request.FILES['file']
             df = pd.read_csv(csv_file)
@@ -81,32 +86,81 @@ class CreateModelView(APIView):
             ignored_columns = [col for col in ignored_columns if col and isinstance(col, str)]
             
             # Parámetros adicionales
-            is_public = request.data.get('is_public', False)
+            raw_is_public = request.data.get('is_public', False)
+            # Convertir string a boolean correctamente
+            if isinstance(raw_is_public, str):
+                is_public = raw_is_public.lower() in ['true', '1', 'yes']
+            else:
+                is_public = bool(raw_is_public)
             
             logging.info(f"Final ignored_columns: {ignored_columns}")
+            logging.info(f"Raw is_public: {raw_is_public}, Processed is_public: {is_public}, Type: {type(raw_is_public)}")
             
             # 3. VALIDACIONES MÍNIMAS
             if not model_name:
-                return Response({'error': 'name is required'}, status=400)
+                return Response({
+                    'error': 'El nombre del modelo es requerido',
+                    'detail': 'El nombre del modelo es requerido',
+                    'error_code': 'MISSING_MODEL_NAME',
+                    'error_type': 'validation_error'
+                }, status=400)
             if not target_column:
-                return Response({'error': 'target_column is required'}, status=400)
+                return Response({
+                    'error': 'La columna objetivo es requerida',
+                    'detail': 'La columna objetivo es requerida',
+                    'error_code': 'MISSING_TARGET_COLUMN',
+                    'error_type': 'validation_error'
+                }, status=400)
             if not task_type or task_type not in ['classification', 'regression']:
-                return Response({'error': 'task_type must be "classification" or "regression"'}, status=400)
+                return Response({
+                    'error': 'El tipo de tarea debe ser "classification" o "regression"',
+                    'detail': 'El tipo de tarea debe ser "classification" o "regression"',
+                    'error_code': 'INVALID_TASK_TYPE',
+                    'error_type': 'validation_error'
+                }, status=400)
             if target_column not in df.columns:
-                return Response({'error': f'Target column "{target_column}" not found'}, status=400)
+                return Response({
+                    'error': f'La columna objetivo "{target_column}" no se encontró en el dataset',
+                    'detail': f'La columna objetivo "{target_column}" no se encontró en el dataset',
+                    'error_code': 'TARGET_COLUMN_NOT_FOUND',
+                    'error_type': 'validation_error'
+                }, status=400)
             
             # Validar que las columnas a ignorar existan
             if ignored_columns:
                 invalid_cols = [col for col in ignored_columns if col not in df.columns]
                 if invalid_cols:
                     return Response({
-                        'error': f'Ignored columns not found in dataset: {invalid_cols}',
+                        'error': f'Las siguientes columnas a ignorar no se encontraron en el dataset: {invalid_cols}',
+                        'detail': f'Las siguientes columnas a ignorar no se encontraron en el dataset: {invalid_cols}',
+                        'error_code': 'INVALID_IGNORED_COLUMNS',
+                        'error_type': 'validation_error',
                         'available_columns': list(df.columns),
                         'processed_ignored_columns': ignored_columns,
                         'raw_input': str(raw_ignored)
                     }, status=400)
             
-            # 4. CREAR MODELO EN BD
+            # 4. VALIDAR NOMBRES DUPLICADOS
+            if is_public:
+                # Para modelos públicos: verificar que no exista otro modelo público con el mismo nombre
+                if AIModel.objects.filter(name=model_name, is_public=True).exists():
+                    return Response({
+                        'error': f'No puedes crear un modelo público con el nombre "{model_name}" porque ya existe otro modelo público con ese nombre en el repositorio global',
+                        'detail': f'Ya existe un modelo público con el nombre "{model_name}" en el repositorio global. Los modelos públicos deben tener nombres únicos a nivel global.',
+                        'error_code': 'DUPLICATE_PUBLIC_MODEL_NAME',
+                        'error_type': 'validation_error'
+                    }, status=400)
+            else:
+                # Para modelos privados: verificar que el usuario no tenga otro modelo privado con el mismo nombre
+                if AIModel.objects.filter(user=request.user, name=model_name, is_public=False).exists():
+                    return Response({
+                        'error': f'No puedes crear un modelo privado con el nombre "{model_name}" porque ya tienes otro modelo privado con ese nombre en tu colección personal',
+                        'detail': f'Ya tienes un modelo privado con el nombre "{model_name}" en tu colección personal. Cada modelo privado debe tener un nombre único dentro de tu colección.',
+                        'error_code': 'DUPLICATE_PRIVATE_MODEL_NAME',
+                        'error_type': 'validation_error'
+                    }, status=400)
+            
+            # 5. CREAR MODELO EN BD
             ai_model = AIModel.objects.create(
                 user=request.user,
                 name=model_name,
@@ -117,7 +171,7 @@ class CreateModelView(APIView):
                 description=request.data.get('description', ''),
             )
             
-            # 5. GUARDAR CSV TEMPORALMENTE
+            # 6. GUARDAR CSV TEMPORALMENTE
             csv_file.seek(0)
             
             # Crear directorio temporal para el usuario
@@ -130,7 +184,7 @@ class CreateModelView(APIView):
                 for chunk in csv_file.chunks():
                     destination.write(chunk)
             
-            # 6. LANZAR ENTRENAMIENTO
+            # 7. LANZAR ENTRENAMIENTO
             train_model_task.delay(
                 model_id=str(ai_model.id),
                 csv_file_path=temp_csv_path,
@@ -147,13 +201,21 @@ class CreateModelView(APIView):
                 'debug_info': {
                     'raw_ignored_input': str(raw_ignored),
                     'processed_ignored_columns': ignored_columns,
-                    'input_type': str(type(raw_ignored))
+                    'input_type': str(type(raw_ignored)),
+                    'raw_is_public': str(raw_is_public),
+                    'processed_is_public': is_public,
+                    'is_public_type': str(type(raw_is_public))
                 }
             }, status=201)
             
         except Exception as e:
             logging.error(f"CreateModelView error: {str(e)}")
-            return Response({'error': str(e)}, status=400)
+            return Response({
+                'error': f'Error interno del servidor: {str(e)}',
+                'detail': f'Error interno del servidor: {str(e)}',
+                'error_code': 'INTERNAL_SERVER_ERROR',
+                'error_type': 'server_error'
+            }, status=500)
 
 class ModelStatusView(APIView):
     permission_classes = [IsAuthenticated]

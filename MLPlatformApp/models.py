@@ -44,13 +44,13 @@ class AIModel(models.Model):
         from django.core.exceptions import ValidationError
         
         if self.is_public:
-            # Para modelos públicos: nombre único globalmente
+            # Para modelos públicos: verificar que no exista otro modelo público con el mismo nombre
             if AIModel.objects.filter(name=self.name, is_public=True).exclude(id=self.id).exists():
-                raise ValidationError(f'A public model with name "{self.name}" already exists')
+                raise ValidationError(f'No puedes crear un modelo público con el nombre "{self.name}" porque ya existe otro modelo público con ese nombre en el repositorio global')
         else:
-            # Para modelos privados: nombre único por usuario
-            if AIModel.objects.filter(user=self.user, name=self.name).exclude(id=self.id).exists():
-                raise ValidationError(f'You already have a model named "{self.name}"')
+            # Para modelos privados: verificar que el usuario no tenga otro modelo privado con el mismo nombre
+            if AIModel.objects.filter(user=self.user, name=self.name, is_public=False).exclude(id=self.id).exists():
+                raise ValidationError(f'No puedes crear un modelo privado con el nombre "{self.name}" porque ya tienes otro modelo privado con ese nombre en tu colección personal')
     def delete(self, *args, **kwargs):
         """Eliminar archivo físico del modelo al borrar registro"""
         if self.model_path and os.path.exists(self.model_path):
