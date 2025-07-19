@@ -1,0 +1,2 @@
+Pararse en la carpeta del back (en este caso "Tesis") y ejecutar lo siguiente
+docker-compose exec backend python manage.py test MLPlatformApp.tests.test_autoscaling_suite -v 2

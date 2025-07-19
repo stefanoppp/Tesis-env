@@ -21,8 +21,12 @@ class AIModel(models.Model):
     target_column = models.CharField(max_length=100)
     features_list = models.JSONField(default=list)  # Lista de características
     
+    # Tiempo de entrenamiento en segundos
+    training_time = models.FloatField(null=True, blank=True)
+    
     # Estado
-    status = models.CharField(max_length=20, default='training', choices=[
+    status = models.CharField(max_length=20, default='pending', choices=[
+        ('pending', 'Pending'),
         ('training', 'Training'),
         ('completed', 'Completed'),
         ('failed', 'Failed')

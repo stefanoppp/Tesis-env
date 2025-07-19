@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from django.core.paginator import Paginator
+from django.conf import settings
 from .models import AIModel, PredictionLog
 from .training import train_model_task
 import pandas as pd
@@ -15,7 +16,7 @@ class CreateModelView(APIView):
     
     def post(self, request):
         try:
-            # 1. VALIDAR ARCHIVO CSV
+            # 1. VALIDAR ARCHIVO CSV PRIMERO
             if 'file' not in request.FILES:
                 return Response({
                     'error': 'Se requiere un archivo CSV',
@@ -25,7 +26,96 @@ class CreateModelView(APIView):
                 }, status=400)
             
             csv_file = request.FILES['file']
-            df = pd.read_csv(csv_file)
+            
+            # Validar que sea un archivo CSV válido
+            try:
+                df = pd.read_csv(csv_file)
+                if df.empty:
+                    return Response({
+                        'error': 'El archivo CSV está vacío',
+                        'detail': 'El archivo CSV está vacío',
+                        'error_code': 'EMPTY_CSV_FILE',
+                        'error_type': 'validation_error'
+                    }, status=400)
+            except Exception as e:
+                return Response({
+                    'error': f'Error al leer el archivo CSV: {str(e)}',
+                    'detail': f'Error al leer el archivo CSV: {str(e)}',
+                    'error_code': 'INVALID_CSV_FILE',
+                    'error_type': 'validation_error'
+                }, status=400)
+            
+            # 2. Obtener configuración de límites
+            ml_settings = getattr(settings, 'ML_PLATFORM_SETTINGS', {})
+            max_global_queue = ml_settings.get('MAX_GLOBAL_QUEUE_SIZE', 20)
+            max_user_pending = ml_settings.get('MAX_USER_PENDING_MODELS', 3)
+            retry_after = ml_settings.get('QUEUE_RETRY_AFTER_SECONDS', 300)
+            
+            # 3. Verificar límite global de cola
+            global_pending_count = AIModel.objects.filter(status='pending').count()
+            if global_pending_count >= max_global_queue:
+                return Response({
+                    'error': f'Sistema temporalmente saturado. Hay {global_pending_count} modelos en cola (máximo {max_global_queue}). Intenta nuevamente en unos minutos.',
+                    'detail': f'Sistema temporalmente saturado. Hay {global_pending_count} modelos en cola (máximo {max_global_queue}). Intenta nuevamente en unos minutos.',
+                    'error_code': 'QUEUE_LIMIT_EXCEEDED',
+                    'error_type': 'queue_limit_error',
+                    'retry_after': retry_after,
+                    'queue_info': {
+                        'global_pending': global_pending_count,
+                        'max_queue_size': max_global_queue
+                    }
+                }, status=429)
+            
+            # 4. Verificar capacidad del worker (70% máximo)
+            import psutil
+            try:
+                cpu_percent = psutil.cpu_percent(interval=0.1)
+                memory_percent = psutil.virtual_memory().percent
+                
+                if cpu_percent > 70 or memory_percent > 70:
+                    return Response({
+                        'error': f'Worker sobrecargado. CPU: {cpu_percent:.1f}%, Memoria: {memory_percent:.1f}%. Límite máximo: 70%. Intenta nuevamente en unos minutos.',
+                        'detail': f'Worker sobrecargado. CPU: {cpu_percent:.1f}%, Memoria: {memory_percent:.1f}%. Límite máximo: 70%. Intenta nuevamente en unos minutos.',
+                        'error_code': 'WORKER_OVERLOADED',
+                        'error_type': 'system_load_error',
+                        'worker_info': {
+                            'cpu_percent': round(cpu_percent, 1),
+                            'memory_percent': round(memory_percent, 1),
+                            'cpu_limit': 70,
+                            'memory_limit': 70
+                        },
+                        'retry_after': 120
+                    }, status=429)
+            except Exception as e:
+                logging.warning(f'Error verificando capacidad del worker: {str(e)}')
+            
+            # 5. Verificar límite de modelos en entrenamiento por usuario (máximo 3)
+            user_training_count = AIModel.objects.filter(user=request.user, status='training').count()
+            if user_training_count >= 3:
+                return Response({
+                    'error': f'Has alcanzado el límite de 3 modelos en entrenamiento. Tienes {user_training_count} modelos entrenando. Espera a que terminen los actuales.',
+                    'detail': f'Has alcanzado el límite de 3 modelos en entrenamiento. Tienes {user_training_count} modelos entrenando. Espera a que terminen los actuales.',
+                    'error_code': 'USER_TRAINING_LIMIT_EXCEEDED',
+                    'error_type': 'user_limit_error',
+                    'user_training_info': {
+                        'training_models': user_training_count,
+                        'max_training_models': 3
+                    }
+                }, status=429)
+            
+            # 6. Verificar rate limiting por usuario (modelos pendientes)
+            user_pending_count = AIModel.objects.filter(user=request.user, status='pending').count()
+            if user_pending_count >= max_user_pending:
+                return Response({
+                    'error': f'Has alcanzado el límite de {max_user_pending} modelos en cola. Tienes {user_pending_count} modelos pendientes. Espera a que se procesen los actuales.',
+                    'detail': f'Has alcanzado el límite de {max_user_pending} modelos en cola. Tienes {user_pending_count} modelos pendientes. Espera a que se procesen los actuales.',
+                    'error_code': 'USER_QUEUE_LIMIT_EXCEEDED',
+                    'error_type': 'user_limit_error',
+                    'user_queue_info': {
+                        'pending_models': user_pending_count,
+                        'max_user_pending': max_user_pending
+                    }
+                }, status=429)
             
             # 2. OBTENER PARÁMETROS BÁSICOS
             model_name = request.data.get('name')
@@ -213,13 +303,31 @@ class CreateModelView(APIView):
             }, status=201)
             
         except Exception as e:
-            logging.error(f"CreateModelView error: {str(e)}")
-            return Response({
-                'error': f'Error interno del servidor: {str(e)}',
-                'detail': f'Error interno del servidor: {str(e)}',
-                'error_code': 'INTERNAL_SERVER_ERROR',
-                'error_type': 'server_error'
-            }, status=500)
+            logging.error(f"CreateModelView error: {str(e)}", exc_info=True)
+            
+            # Manejar errores específicos de manera más amigable
+            error_message = str(e)
+            if 'pandas' in error_message.lower() or 'csv' in error_message.lower():
+                return Response({
+                    'error': 'Error al procesar el archivo CSV. Verifica que el formato sea correcto.',
+                    'detail': f'Error al procesar el archivo CSV: {error_message}',
+                    'error_code': 'CSV_PROCESSING_ERROR',
+                    'error_type': 'validation_error'
+                }, status=400)
+            elif 'database' in error_message.lower() or 'integrity' in error_message.lower():
+                return Response({
+                    'error': 'Error de base de datos. Verifica que no exista un modelo con el mismo nombre.',
+                    'detail': f'Error de base de datos: {error_message}',
+                    'error_code': 'DATABASE_ERROR',
+                    'error_type': 'database_error'
+                }, status=400)
+            else:
+                return Response({
+                    'error': 'Error interno del servidor. Por favor, intenta nuevamente.',
+                    'detail': f'Error interno: {error_message}',
+                    'error_code': 'INTERNAL_SERVER_ERROR',
+                    'error_type': 'server_error'
+                }, status=500)
 
 class ModelStatusView(APIView):
     permission_classes = [IsAuthenticated]
@@ -276,9 +384,14 @@ class MyModelsView(APIView):
     
     def get(self, request):
         try:
+            # Obtener configuración de paginación
+            ml_settings = getattr(settings, 'ML_PLATFORM_SETTINGS', {})
+            default_page_size = ml_settings.get('DEFAULT_PAGE_SIZE', 15)
+            max_page_size = ml_settings.get('MAX_PAGE_SIZE', 100)
+            
             # Obtener parámetros de paginación
             page = int(request.GET.get('page', 1))
-            page_size = int(request.GET.get('page_size', 15))
+            page_size = min(int(request.GET.get('page_size', default_page_size)), max_page_size)
             
             # Obtener todos los modelos del usuario autenticado ordenados por fecha
             models_queryset = AIModel.objects.filter(user=request.user).order_by('-created_at')
@@ -308,6 +421,7 @@ class MyModelsView(APIView):
                     'progress': model.progress,
                     'is_public': model.is_public,
                     'created_at': model.created_at,
+                    'training_time': model.training_time,
                     'model_path': model.model_path if model.status == 'completed' else None
                 })
             
@@ -535,8 +649,11 @@ class DeleteModelView(APIView):
 class DeleteMultipleModelsView(APIView):
     permission_classes = [IsAuthenticated]
     
-    # Límites de operaciones masivas
-    MAX_MODELS_PER_REQUEST = 100
+    def __init__(self):
+        super().__init__()
+        # Obtener configuración de límites
+        ml_settings = getattr(settings, 'ML_PLATFORM_SETTINGS', {})
+        self.MAX_MODELS_PER_REQUEST = ml_settings.get('MAX_BULK_DELETE_MODELS', 100)
     
     def _delete_model_files(self, models_queryset):
         """Eliminar archivos físicos de modelos de forma segura"""
@@ -699,9 +816,14 @@ class PublicModelsView(APIView):
     
     def get(self, request):
         try:
+            # Obtener configuración de paginación
+            ml_settings = getattr(settings, 'ML_PLATFORM_SETTINGS', {})
+            default_page_size = ml_settings.get('DEFAULT_PAGE_SIZE', 15)
+            max_page_size = ml_settings.get('MAX_PAGE_SIZE', 100)
+            
             # Obtener parámetros de paginación
             page = int(request.GET.get('page', 1))
-            page_size = int(request.GET.get('page_size', 15))
+            page_size = min(int(request.GET.get('page_size', default_page_size)), max_page_size)
             
             # Obtener todos los modelos públicos completados ordenados por fecha
             public_models_queryset = AIModel.objects.filter(
@@ -745,6 +867,7 @@ class PublicModelsView(APIView):
                         'features_count': len(model.features_list),
                         'features_list': model.features_list,
                         'created_at': model.created_at,
+                        'training_time': model.training_time,
                         'metrics': metrics,
                         'statistics': {
                             'total_predictions': total_predictions,
@@ -771,6 +894,58 @@ class PublicModelsView(APIView):
             
         except Exception as e:
             logging.error(f"PublicModelsView error: {str(e)}")
+            return Response({'error': str(e)}, status=500)
+
+class QueueStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            # Obtener configuración de límites
+            ml_settings = getattr(settings, 'ML_PLATFORM_SETTINGS', {})
+            max_global_queue = ml_settings.get('MAX_GLOBAL_QUEUE_SIZE', 20)
+            max_user_pending = ml_settings.get('MAX_USER_PENDING_MODELS', 3)
+            
+            user_plan = UserPlan.get_user_plan(request.user)
+            
+            # Información del plan del usuario
+            plan_info = {
+                'current_plan': user_plan.plan_type,
+                'daily_model_limit': user_plan.daily_model_limit,
+                'hourly_model_limit': user_plan.hourly_model_limit,
+                'concurrent_model_limit': user_plan.concurrent_model_limit,
+                'daily_prediction_limit': user_plan.daily_prediction_limit,
+                'models_created_today': user_plan.get_daily_model_count(),
+                'models_created_this_hour': user_plan.get_hourly_model_count(),
+                'concurrent_models': user_plan.get_concurrent_model_count(),
+                'predictions_today': user_plan.get_daily_prediction_count(),
+                'can_create_model': user_plan.can_create_model()
+            }
+            
+            # Estado de la cola global
+            total_pending = AIModel.objects.filter(status='pending').count()
+            total_training = AIModel.objects.filter(status='training').count()
+            user_pending = AIModel.objects.filter(user=request.user, status='pending').count()
+            
+            queue_info = {
+                'total_pending': total_pending,
+                'total_training': total_training,
+                'max_global_queue': max_global_queue,
+                'queue_utilization_percent': round((total_pending / max_global_queue) * 100, 1) if max_global_queue > 0 else 0,
+                'user_pending': user_pending,
+                'max_user_pending': max_user_pending,
+                'user_slots_available': max_user_pending - user_pending,
+                'estimated_wait_time_minutes': total_pending * ml_settings.get('ESTIMATED_TRAINING_TIME_MINUTES', 30)
+            }
+            
+            return Response({
+                'plan_info': plan_info,
+                'queue_info': queue_info,
+                'timestamp': timezone.now()
+            })
+            
+        except Exception as e:
+            logging.error(f"QueueStatusView error: {str(e)}")
             return Response({'error': str(e)}, status=500)
 
 class ModelInfoView(APIView):

@@ -4,6 +4,8 @@ djangorestframework==3.16.0
 sqlparse==0.5.3
 tzdata==2025.2
 celery==5.3.5
+django-celery-beat>=2.7.0
+flower==2.0.1
 django-cors-headers==4.3.1
 redis==5.2.1
 djangorestframework-simplejwt==5.3.0
@@ -16,3 +18,18 @@ seaborn
 openpyxl
 gunicorn==21.2.0
 pycaret
+
+# Optimizaciones GPU (opcionales - instalar solo si hay GPU NVIDIA)
+# cuml>=0.15  # RAPIDS cuML para aceleración GPU
+# cudf>=0.15  # RAPIDS cuDF para DataFrames en GPU
+# cupy-cuda11x  # CuPy para operaciones numéricas en GPU
+
+# Optimizaciones CPU
+psutil>=5.8.0  # Para monitoreo de recursos del sistema
+numba>=0.56.0  # Compilación JIT para acelerar operaciones numéricas
+scikit-learn-intelex  # Optimizaciones Intel para scikit-learn
+
+# Versiones específicas para mejor rendimiento
+xgboost>=1.6.0  # Soporte mejorado para GPU
+lightgbm>=3.3.0  # Soporte para GPU
+catboost>=1.0.0  # Soporte nativo para GPU

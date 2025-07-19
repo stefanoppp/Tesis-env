@@ -1,8 +1,10 @@
 from celery import shared_task
 from .models import AIModel
+from .config.hardware_optimization import hardware_optimizer
 import pandas as pd
 import logging
 import os
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,9 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
         ai_model.progress = 10
         ai_model.save()
         
+        # Iniciar timer de entrenamiento
+        training_start_time = time.time()
+        
         logger.info(f"Starting training for model {model_id}")
         
         # 1. CARGAR DATOS DESDE ARCHIVO
@@ -39,6 +44,21 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
             if target_column not in numeric_cols:
                 raise ValueError(f"La columna target '{target_column}' debe ser numérica para regresión")
         
+        # VALIDACIÓN CRÍTICA PARA CLASIFICACIÓN
+        if task_type == 'classification':
+            class_counts = data[target_column].value_counts()
+            min_class_count = class_counts.min()
+            classes_with_one_sample = class_counts[class_counts == 1]
+            
+            if len(classes_with_one_sample) > 0:
+                logger.warning(f"ADVERTENCIA: Dataset con clases problemáticas detectado.")
+                logger.warning(f"Clases con solo 1 muestra: {classes_with_one_sample.to_dict()}")
+                logger.warning(f"Esto puede causar problemas durante el entrenamiento.")
+                
+                # Si hay demasiadas clases con 1 muestra, rechazar el dataset
+                if len(classes_with_one_sample) > len(class_counts) * 0.3:  # Más del 30% de clases problemáticas
+                    raise ValueError(f"Dataset inválido: {len(classes_with_one_sample)} clases tienen solo 1 muestra. Esto representa el {len(classes_with_one_sample)/len(class_counts)*100:.1f}% de las clases. Por favor, proporcione un dataset con más muestras por clase para un entrenamiento efectivo.")
+        
         logger.info(f"Using '{target_column}' as target column")
         logger.info(f"Data types: {data.dtypes.to_dict()}")
         
@@ -51,31 +71,125 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
         else:
             from pycaret.regression import setup, compare_models, save_model, pull
         
-        # 3. SETUP DE PYCARET
-        logger.info("Setting up PyCaret...")
+        # 3. SETUP DE PYCARET CON OPTIMIZACIONES AUTOMÁTICAS
+        logger.info("Setting up PyCaret with hardware optimization...")
         logger.info(f"Ignoring columns: {ignored_columns}")
-        setup(
-            data=data,
-            target=target_column,
-            ignore_features=ignored_columns,
-            remove_multicollinearity=True,
-            remove_outliers=True,
-            imputation_type="simple",
-            numeric_imputation="mean",
-            categorical_imputation="mode",
-            normalize=True,
-            verbose=False,
-            n_jobs=-1,
-            session_id=123
-        ) 
+        
+        # Obtener configuración optimizada según hardware
+        hardware_optimizer.log_system_info()
+        config = hardware_optimizer.get_optimal_config()
+        
+        # VERIFICAR DISTRIBUCIÓN DE CLASES ANTES DEL SETUP PARA AJUSTAR CV_FOLDS
+        if task_type == 'classification':
+            # Contar muestras por clase
+            class_counts = data[target_column].value_counts()
+            min_class_count = class_counts.min()
+            total_samples = len(data)
+            
+            logger.info(f"Distribución de clases: {class_counts.to_dict()}")
+            logger.info(f"Clase con menos muestras: {min_class_count}")
+            logger.info(f"Total de muestras: {total_samples}")
+            
+            # VALIDACIÓN CRÍTICA: Si hay clases con solo 1 muestra, forzar holdout
+            if min_class_count < 2:
+                logger.error(f"DATASET INVÁLIDO: Hay clases con solo {min_class_count} muestra(s). Esto es insuficiente para entrenamiento.")
+                logger.error(f"Clases problemáticas: {class_counts[class_counts < 2].to_dict()}")
+                
+                # Forzar holdout y train_size alto para evitar problemas
+                adjusted_cv_folds = None
+                train_size = 0.9  # Usar 90% para entrenamiento
+                logger.warning(f"FORZANDO holdout validation con train_size={train_size} debido a clases con 1 muestra.")
+                
+            elif min_class_count < config['cv_folds']:
+                # Si hay clases con pocas muestras, reducir cv_folds
+                adjusted_cv_folds = max(min_class_count, 2)  # Mínimo 2 folds
+                train_size = 0.8  # Configuración estándar
+                logger.warning(f"Clases con pocas muestras detectadas. Reduciendo CV folds de {config['cv_folds']} a {adjusted_cv_folds}")
+                
+            else:
+                adjusted_cv_folds = config['cv_folds']
+                train_size = 0.8  # Configuración estándar
+                logger.info(f"Distribución de clases adecuada. Usando {adjusted_cv_folds} CV folds")
+        else:
+            # Para regresión, usar configuración normal
+            adjusted_cv_folds = config['cv_folds']
+            train_size = 0.8
+            logger.info(f"Tarea de regresión. Usando {adjusted_cv_folds} CV folds")
+        
+        # Configuración optimizada según hardware disponible
+        setup_params = {
+            'data': data,
+            'target': target_column,
+            'ignore_features': ignored_columns,
+            'remove_multicollinearity': True,
+            'remove_outliers': True,
+            'imputation_type': "simple",
+            'numeric_imputation': "mean",
+            'categorical_imputation': "mode",
+            'normalize': True,
+            'verbose': False,
+            'n_jobs': config['n_jobs'],
+            'session_id': 123,
+            'train_size': train_size  # Tamaño de entrenamiento ajustado
+        }
+        
+        # Agregar fold solo si no es None (para evitar holdout cuando hay clases con 1 muestra)
+        if adjusted_cv_folds is not None:
+            setup_params['fold'] = adjusted_cv_folds
+            logger.info(f"Usando {adjusted_cv_folds}-fold cross validation con train_size={train_size}")
+        else:
+            logger.info(f"Usando holdout validation con train_size={train_size} debido a clases con pocas muestras")
+        
+        # Agregar configuración GPU si está disponible
+        if config['use_gpu']:
+            setup_params['use_gpu'] = True
+            logger.info(f"GPU enabled with {config['n_jobs']} CPU jobs")
+        else:
+            logger.info(f"CPU-only mode with {config['n_jobs']} jobs")
+        
+        setup(**setup_params) 
         logger.info("PyCaret setup completed successfully")
         
         ai_model.progress = 50
         ai_model.save()
         
-        # 4. COMPARAR MODELOS Y OBTENER MÉTRICAS
-        logger.info("Comparing all models...")
-        best_model = compare_models(verbose=False)
+        # 4. COMPARAR MODELOS CON CONFIGURACIÓN OPTIMIZADA
+        logger.info("Comparing models with hardware-optimized configuration...")
+        
+        # Seleccionar modelos según el tipo de tarea
+        if task_type == 'classification':
+            selected_models = config['preferred_models_classification']
+            logger.info("Using CLASSIFICATION models")
+        else:
+            selected_models = config['preferred_models_regression']
+            logger.info("Using REGRESSION models")
+        
+        # La verificación de distribución de clases ya se hizo antes del setup
+        
+        # Usar configuración optimizada según hardware
+        compare_params = {
+            'include': selected_models,
+            'verbose': False,
+            'n_select': 1,
+            'budget_time': config['budget_time']  # Tiempo MÁXIMO por modelo durante comparación
+        }
+        
+        # Agregar fold solo si no es None (para evitar holdout cuando hay clases con 1 muestra)
+        if adjusted_cv_folds is not None:
+            compare_params['fold'] = adjusted_cv_folds
+        else:
+            logger.info("Usando holdout validation debido a clases con pocas muestras")
+        
+        logger.info(f"Selected {len(selected_models)} models: {selected_models}")
+        logger.info(f"CV folds: {adjusted_cv_folds if adjusted_cv_folds is not None else 'holdout'}")
+        logger.info(f"Budget time: {config['budget_time']} min MÁXIMO por modelo durante comparación")
+        logger.info("NOTA: 'budget_time' es el tiempo LÍMITE por modelo en compare_models(), no el tiempo real")
+        
+        best_model = compare_models(**compare_params)
+        
+        # Calcular tiempo real de entrenamiento hasta este punto
+        training_end_time = time.time()
+        actual_training_time = round(training_end_time - training_start_time, 2)
         
         # OBTENER MÉTRICAS AUTOMÁTICAMENTE DESDE PYCARET
         try:
@@ -93,7 +207,7 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
                     'f1_score': round(float(metrics_df.iloc[0]['F1']), 4),
                     'auc': round(float(metrics_df.iloc[0]['AUC']), 4) if 'AUC' in metrics_df.columns else None,
                     'kappa': round(float(metrics_df.iloc[0]['Kappa']), 4) if 'Kappa' in metrics_df.columns else None,
-                    'training_time': round(float(metrics_df.iloc[0]['TT (Sec)']), 2) if 'TT (Sec)' in metrics_df.columns else None,
+                    'training_time': actual_training_time,
                     
                     # INTERPRETACIÓN AUTOMÁTICA BASADA EN ESTÁNDARES ACADÉMICOS
                     # Criterios según Sokolova & Lapalme (2009) y Hosmer & Lemeshow (2000)
@@ -115,7 +229,7 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
                     'mae': round(float(metrics_df.iloc[0]['MAE']), 4),
                     'rmse': round(float(metrics_df.iloc[0]['RMSE']), 4),
                     'mape': round(float(metrics_df.iloc[0]['MAPE']), 4) if 'MAPE' in metrics_df.columns else None,
-                    'training_time': round(float(metrics_df.iloc[0]['TT (Sec)']), 2) if 'TT (Sec)' in metrics_df.columns else None,
+                    'training_time': actual_training_time,
                     
                     # INTERPRETACIÓN AUTOMÁTICA BASADA EN ESTÁNDARES ACADÉMICOS
                     # Criterios según Cohen (1988) y Hosmer & Lemeshow (2000)
@@ -191,9 +305,12 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
         ai_model.model_path = model_path + '.pkl'
         ai_model.features_list = final_features
         ai_model.model_metrics = model_metrics
+        ai_model.training_time = actual_training_time
         ai_model.status = 'completed'
         ai_model.progress = 100
         ai_model.save()
+        
+        logger.info(f"Actual training time: {actual_training_time} seconds")
         # 7. LIMPIAR ARCHIVO TEMPORAL
         try:
             if os.path.exists(csv_file_path):
