@@ -1,0 +1,76 @@
+# === ARCHIVOS DE DESARROLLO ===
+.git
+.gitignore
+README.md
+README_*.md
+*.md
+.env.example
+
+# === ARCHIVOS DE PYTHON ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# === ENTORNOS VIRTUALES ===
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# === ARCHIVOS DE TESTING ===
+test_*.py
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# === ARCHIVOS DE IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === LOGS Y TEMPORALES ===
+logs/*.log
+*.log
+.DS_Store
+Thumbs.db
+
+# === ARCHIVOS DE DOCKER ===
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# === ARCHIVOS DE MEDIA (DESARROLLO) ===
+media/uploads/
+media/temp/
+
+# === ARCHIVOS DE CONFIGURACIÓN LOCAL ===
+.env
+local_settings.py
+
+# === ARCHIVOS DE BACKUP ===
+*.bak
+*.backup
+*.sql
+*.dump
