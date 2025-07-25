@@ -28,11 +28,20 @@ class Command(BaseCommand):
         # Obtener configuración optimizada
         config = hardware_optimizer.get_optimal_config()
         
+        # Obtener información del sistema
+        system_info = hardware_optimizer.get_system_info()
+        
         # Mostrar información del sistema
         self.stdout.write(self.style.HTTP_INFO('📊 INFORMACIÓN DEL SISTEMA:'))
-        self.stdout.write(f"  • CPU Cores: {config['cpu_cores']}")
-        self.stdout.write(f"  • RAM: {config['ram_gb']:.1f} GB")
-        self.stdout.write(f"  • GPU disponible: {'✅ Sí' if config['use_gpu'] else '❌ No'}")
+        if 'cpu_info' in system_info and system_info['cpu_info']:
+            cpu_info = system_info['cpu_info']
+            self.stdout.write(f"  • Procesador: {cpu_info.get('brand', 'Desconocido')}")
+            self.stdout.write(f"  • Arquitectura: {cpu_info.get('architecture', 'Desconocida')}")
+        self.stdout.write(f"  • CPU Cores (Físicos): {system_info['cpu_count_physical']}")
+        self.stdout.write(f"  • CPU Cores (Lógicos): {system_info['cpu_count_logical']}")
+        self.stdout.write(f"  • RAM Total: {system_info['memory_total_gb']:.1f} GB")
+        self.stdout.write(f"  • RAM Disponible: {system_info['memory_available_gb']:.1f} GB")
+        self.stdout.write(f"  • GPU disponible: {'✅ Sí' if system_info['gpu_available'] else '❌ No'}")
         self.stdout.write('')
         
         # Mostrar configuración recomendada
@@ -43,8 +52,12 @@ class Command(BaseCommand):
         self.stdout.write(f"  • Tiempo límite por modelo: {config['budget_time']} min (durante comparación)")
         self.stdout.write('')
         self.stdout.write(self.style.HTTP_INFO('📊 MODELOS SELECCIONADOS:'))
-        self.stdout.write(f"  • Clasificación ({len(config['preferred_models_classification'])}): {', '.join(config['preferred_models_classification'])}")
-        self.stdout.write(f"  • Regresión ({len(config['preferred_models_regression'])}): {', '.join(config['preferred_models_regression'])}")
+        if 'preferred_models' in config:
+            models = config['preferred_models']
+            self.stdout.write(f"  • Modelos preferidos ({len(models)}): {', '.join(models[:5])}{'...' if len(models) > 5 else ''}")
+        else:
+            # Fallback para compatibilidad
+            self.stdout.write("  • Modelos: Configuración estándar")
         self.stdout.write('')
         
         # Mostrar recomendaciones de Celery

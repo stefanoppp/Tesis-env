@@ -30,7 +30,7 @@ INSTALLED_APPS = [
     # Terceros
     'rest_framework',
     'corsheaders',
-    # 'django_celery_beat',  # Comentado temporalmente para tests
+    'django_celery_beat',
 
     # Propias
     'UsersApp',

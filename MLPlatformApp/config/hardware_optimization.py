@@ -14,32 +14,152 @@ class HardwareOptimizer:
         self.cpu_count = psutil.cpu_count(logical=True)
         self.physical_cpu_count = psutil.cpu_count(logical=False)
         self.memory_gb = psutil.virtual_memory().total / (1024**3)
+        self.cpu_info = self._detect_cpu_info()
         self.gpu_available = self._detect_gpu()
         
+    def _detect_cpu_info(self) -> Dict[str, Any]:
+        """Detecta información detallada del procesador"""
+        cpu_info = {
+            'logical_cores': self.cpu_count,
+            'physical_cores': self.physical_cpu_count,
+            'brand': 'Unknown',
+            'architecture': 'Unknown',
+            'frequency': None
+        }
+        
+        try:
+            # Obtener frecuencia del CPU
+            freq = psutil.cpu_freq()
+            if freq:
+                cpu_info['frequency'] = {
+                    'current': round(freq.current, 2),
+                    'min': round(freq.min, 2) if freq.min else None,
+                    'max': round(freq.max, 2) if freq.max else None
+                }
+        except Exception as e:
+            logger.warning(f"Error al obtener frecuencia del CPU: {e}")
+            
+        try:
+            # Detectar información del CPU en Windows
+            import platform
+            import subprocess
+            
+            if platform.system() == "Windows":
+                # Obtener información del procesador con WMIC
+                result = subprocess.run(['wmic', 'cpu', 'get', 'name'], 
+                                      capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')
+                    if len(lines) > 1:
+                        cpu_info['brand'] = lines[1].strip()
+                        
+                # Obtener arquitectura
+                result = subprocess.run(['wmic', 'cpu', 'get', 'architecture'], 
+                                      capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')
+                    if len(lines) > 1:
+                        arch_code = lines[1].strip()
+                        arch_map = {'0': 'x86', '1': 'MIPS', '2': 'Alpha', '3': 'PowerPC', 
+                                   '5': 'ARM', '6': 'ia64', '9': 'x64'}
+                        cpu_info['architecture'] = arch_map.get(arch_code, f"Unknown ({arch_code})")
+            else:
+                # Para sistemas Unix/Linux
+                cpu_info['brand'] = platform.processor()
+                cpu_info['architecture'] = platform.machine()
+                
+        except Exception as e:
+            logger.warning(f"Error al detectar información del CPU: {e}")
+            
+        try:
+            # Información adicional con cpuinfo (si está disponible)
+            import cpuinfo
+            info = cpuinfo.get_cpu_info()
+            if info:
+                cpu_info['brand'] = info.get('brand_raw', cpu_info['brand'])
+                cpu_info['architecture'] = info.get('arch', cpu_info['architecture'])
+                cpu_info['vendor'] = info.get('vendor_id_raw', 'Unknown')
+                cpu_info['flags'] = info.get('flags', [])
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"Error al obtener información detallada del CPU: {e}")
+            
+        logger.info(f"🖥️ CPU detectado: {cpu_info['brand']} ({cpu_info['physical_cores']} cores físicos, {cpu_info['logical_cores']} lógicos)")
+        return cpu_info
+        
     def _detect_gpu(self) -> bool:
-        """Detecta si hay GPU NVIDIA disponible con CUDA"""
+        """Detecta si hay GPU disponible con múltiples métodos"""
+        gpu_info = []
+        
+        # Método 1: cuML (RAPIDS)
         try:
             import cuml
-            logger.info("GPU NVIDIA con cuML detectada")
+            gpu_info.append("cuML (RAPIDS)")
+            logger.info("✅ GPU NVIDIA con cuML/RAPIDS detectada")
             return True
         except ImportError:
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    logger.info("GPU NVIDIA con PyTorch detectada")
-                    return True
-            except ImportError:
-                pass
+            pass
             
-            try:
-                import tensorflow as tf
-                if tf.config.list_physical_devices('GPU'):
-                    logger.info("GPU detectada con TensorFlow")
+        # Método 2: PyTorch CUDA
+        try:
+            import torch
+            if torch.cuda.is_available():
+                device_count = torch.cuda.device_count()
+                device_name = torch.cuda.get_device_name(0) if device_count > 0 else "Unknown"
+                gpu_info.append(f"PyTorch CUDA - {device_count} GPU(s) - {device_name}")
+                logger.info(f"✅ GPU detectada con PyTorch: {device_name} ({device_count} dispositivos)")
+                return True
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"Error al detectar GPU con PyTorch: {e}")
+            
+        # Método 3: TensorFlow
+        try:
+            import tensorflow as tf
+            gpus = tf.config.list_physical_devices('GPU')
+            if gpus:
+                gpu_info.append(f"TensorFlow - {len(gpus)} GPU(s)")
+                logger.info(f"✅ GPU detectada con TensorFlow: {len(gpus)} dispositivos")
+                return True
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"Error al detectar GPU con TensorFlow: {e}")
+            
+        # Método 4: nvidia-ml-py (NVIDIA Management Library)
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            device_count = pynvml.nvmlDeviceGetCount()
+            if device_count > 0:
+                for i in range(device_count):
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                    name = pynvml.nvmlDeviceGetName(handle).decode('utf-8')
+                    gpu_info.append(f"NVML - {name}")
+                logger.info(f"✅ GPU detectada con NVML: {device_count} dispositivos NVIDIA")
+                return True
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"Error al detectar GPU con NVML: {e}")
+            
+        # Método 5: Detección básica con subprocess (Windows)
+        try:
+            import subprocess
+            import platform
+            if platform.system() == "Windows":
+                result = subprocess.run(['wmic', 'path', 'win32_VideoController', 'get', 'name'], 
+                                      capture_output=True, text=True, timeout=10)
+                if result.returncode == 0 and 'NVIDIA' in result.stdout:
+                    gpu_info.append("Windows WMIC - NVIDIA detectada")
+                    logger.info("✅ GPU NVIDIA detectada via Windows WMIC")
                     return True
-            except ImportError:
-                pass
+        except Exception as e:
+            logger.warning(f"Error al detectar GPU con WMIC: {e}")
                 
-        logger.info("No se detectó GPU NVIDIA compatible")
+        logger.info("❌ No se detectó GPU compatible")
         return False
     
     def get_optimal_config(self) -> Dict[str, Any]:
@@ -161,6 +281,7 @@ class HardwareOptimizer:
         memory = psutil.virtual_memory()
         
         return {
+            'cpu_info': self.cpu_info,
             'cpu_count_logical': self.cpu_count,
             'cpu_count_physical': self.physical_cpu_count,
             'cpu_freq': psutil.cpu_freq()._asdict() if psutil.cpu_freq() else None,
@@ -169,6 +290,11 @@ class HardwareOptimizer:
             'memory_percent_used': memory.percent,
             'gpu_available': self.gpu_available,
             'platform': os.name,
+            'platform_detailed': {
+                'system': os.name,
+                'release': os.uname().release if hasattr(os, 'uname') else 'Unknown',
+                'version': os.uname().version if hasattr(os, 'uname') else 'Unknown'
+            }
         }
     
     def log_system_info(self):
@@ -176,20 +302,39 @@ class HardwareOptimizer:
         info = self.get_system_info()
         config = self.get_optimal_config()
         
-        logger.info("=== INFORMACIÓN DEL SISTEMA ===")
-        logger.info(f"CPU Cores (Lógicos): {info['cpu_count_logical']}")
-        logger.info(f"CPU Cores (Físicos): {info['cpu_count_physical']}")
-        logger.info(f"RAM Total: {info['memory_total_gb']} GB")
-        logger.info(f"RAM Disponible: {info['memory_available_gb']} GB")
-        logger.info(f"GPU Disponible: {info['gpu_available']}")
+        logger.info("=== 🖥️ INFORMACIÓN DEL SISTEMA ===")
+        logger.info(f"🔧 Procesador: {info['cpu_info']['brand']}")
+        logger.info(f"⚙️ Arquitectura: {info['cpu_info']['architecture']}")
+        logger.info(f"🧮 CPU Cores (Físicos): {info['cpu_count_physical']}")
+        logger.info(f"🧮 CPU Cores (Lógicos): {info['cpu_count_logical']}")
         
-        logger.info("=== CONFIGURACIÓN OPTIMIZADA ===")
-        logger.info(f"Usar GPU: {config['use_gpu']}")
-        logger.info(f"n_jobs recomendado: {config['n_jobs']}")
-        logger.info(f"Concurrencia Celery recomendada: {config['recommended_concurrency']}")
-        logger.info(f"Modelos preferidos: {config['preferred_models']}")
-        logger.info(f"CV Folds: {config['cv_folds']}")
-        logger.info(f"Tiempo por modelo: {config['budget_time']} minutos")
+        if info['cpu_info']['frequency']:
+            freq = info['cpu_info']['frequency']
+            logger.info(f"⚡ Frecuencia CPU: {freq['current']} MHz (Max: {freq['max']} MHz)")
+            
+        logger.info(f"💾 RAM Total: {info['memory_total_gb']} GB")
+        logger.info(f"💾 RAM Disponible: {info['memory_available_gb']} GB ({100-info['memory_percent_used']:.1f}% libre)")
+        logger.info(f"🎮 GPU Disponible: {'✅ Sí' if info['gpu_available'] else '❌ No'}")
+        logger.info(f"🖥️ Sistema: {info['platform_detailed']['system']}")
+        
+        logger.info("=== ⚙️ CONFIGURACIÓN OPTIMIZADA ===")
+        logger.info(f"🎮 Usar GPU: {'✅ Sí' if config['use_gpu'] else '❌ No'}")
+        logger.info(f"⚡ n_jobs recomendado: {config['n_jobs']}")
+        logger.info(f"🔄 Concurrencia Celery recomendada: {config['recommended_concurrency']}")
+        logger.info(f"🤖 Modelos preferidos ({len(config['preferred_models'])}): {', '.join(config['preferred_models'][:5])}{'...' if len(config['preferred_models']) > 5 else ''}")
+        logger.info(f"📊 CV Folds: {config['cv_folds']}")
+        logger.info(f"⏱️ Tiempo por modelo: {config['budget_time']} minutos")
+        
+        # Mostrar recomendaciones adicionales
+        if config['use_gpu']:
+            logger.info("💡 Recomendación: Sistema con GPU detectada - Configuración optimizada para aceleración por GPU")
+        else:
+            logger.info("💡 Recomendación: Sistema sin GPU - Configuración optimizada para procesamiento por CPU")
+            
+        if info['memory_total_gb'] < 8:
+            logger.warning("⚠️ Advertencia: RAM limitada detectada - Se usará configuración conservadora")
+        elif info['memory_total_gb'] >= 16:
+            logger.info("✅ Excelente: RAM abundante detectada - Se puede usar configuración agresiva")
 
 # Instancia global para usar en toda la aplicación
 hardware_optimizer = HardwareOptimizer()

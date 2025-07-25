@@ -469,6 +469,14 @@ class PredictView(APIView):
                     'progress': ai_model.progress
                 }, status=400)
             
+            # Verificar que el archivo del modelo existe
+            if not ai_model.model_path or not os.path.exists(ai_model.model_path):
+                return Response({
+                    'error': 'Model file not found',
+                    'details': f'Model file does not exist: {ai_model.model_path}',
+                    'suggestion': 'The model may have been deleted or corrupted. Please retrain the model.'
+                }, status=404)
+            
             # Obtener datos de entrada
             input_data = request.data.get('input_data', {})
             
@@ -493,40 +501,33 @@ class PredictView(APIView):
                     'note': 'Send a POST request with input_data containing all required features'
                 }, status=400)
             
-            # Validar features faltantes
+            # Validar que no todos los valores sean 0 o vacíos
+            non_zero_values = []
+            for key, value in input_data.items():
+                if value is not None and value != 0 and value != '' and value != '0':
+                    non_zero_values.append(key)
+            
+            if not non_zero_values:
+                return Response({
+                    'error': 'Invalid input data: all values are zero or empty',
+                    'details': 'Please provide meaningful values for at least some features',
+                    'received_data': input_data,
+                    'suggestion': 'Enter realistic values for the features to get a meaningful prediction'
+                }, status=400)
+            
+            # Nota: Las features faltantes son permitidas, PyCaret las manejará automáticamente
+            # usando la media/moda calculada durante el entrenamiento
             missing_features = set(feature_names) - set(input_data.keys())
             if missing_features:
-                # Crear ejemplo con valores placeholder
-                example_data = {}
+                logging.info(f"Missing features will be handled by PyCaret: {missing_features}")
+                # Crear un DataFrame con todas las features, rellenando con None las faltantes
+                complete_input_data = {}
                 for feature_name in feature_names:
                     if feature_name in input_data:
-                        example_data[feature_name] = input_data[feature_name]  # Mantener valores existentes
+                        complete_input_data[feature_name] = input_data[feature_name]
                     else:
-                        # Sugerir valores de ejemplo según el nombre
-                        if any(word in feature_name.lower() for word in ['type', 'class', 'category']):
-                            example_data[feature_name] = 'example_category'
-                        elif any(word in feature_name.lower() for word in ['name', 'id']):
-                            example_data[feature_name] = 'example_name'
-                        elif any(word in feature_name.lower() for word in ['generation', 'year', 'age']):
-                            example_data[feature_name] = 1
-                        else:
-                            example_data[feature_name] = 100  # Valor numérico por defecto
-                
-                return Response({
-                    'error': 'Missing required features for prediction',
-                    'missing_features': sorted(list(missing_features)),
-                    'features_provided': sorted(list(input_data.keys())) if input_data else [],
-                    'required_request_format': {
-                        'input_data': example_data
-                    },
-                    'instructions': [
-                        '1. Send a POST request to this endpoint',
-                        '2. Include "input_data" in the request body',
-                        '3. Provide values for ALL required features',
-                        f'4. This model needs {len(feature_names)} features total'
-                    ],
-                    'all_required_features': feature_names
-                }, status=400)
+                        complete_input_data[feature_name] = None  # PyCaret manejará esto
+                input_data = complete_input_data
             
             # Hacer predicción
             result = self._make_prediction(ai_model, input_data)
@@ -1010,4 +1011,178 @@ class ModelInfoView(APIView):
                 'error': f'Error loading metrics: {str(e)}',
                 'model_type': 'unknown',
                 'available': False
+            }
+
+class SuggestTaskTypeView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            # Validar que se envió un archivo CSV
+            if 'file' not in request.FILES:
+                return Response({
+                    'error': 'Se requiere un archivo CSV para analizar',
+                    'error_code': 'MISSING_CSV_FILE'
+                }, status=400)
+            
+            csv_file = request.FILES['file']
+            target_column = request.data.get('target_column')
+            
+            if not target_column:
+                return Response({
+                    'error': 'Se requiere especificar la columna objetivo',
+                    'error_code': 'MISSING_TARGET_COLUMN'
+                }, status=400)
+            
+            # Leer el archivo CSV
+            try:
+                df = pd.read_csv(csv_file)
+                if df.empty:
+                    return Response({
+                        'error': 'El archivo CSV está vacío',
+                        'error_code': 'EMPTY_CSV_FILE'
+                    }, status=400)
+            except Exception as e:
+                return Response({
+                    'error': f'Error al leer el archivo CSV: {str(e)}',
+                    'error_code': 'INVALID_CSV_FILE'
+                }, status=400)
+            
+            # Validar que la columna objetivo existe
+            if target_column not in df.columns:
+                return Response({
+                    'error': f'La columna objetivo "{target_column}" no se encontró en el dataset',
+                    'error_code': 'TARGET_COLUMN_NOT_FOUND',
+                    'available_columns': list(df.columns)
+                }, status=400)
+            
+            # Analizar la columna objetivo
+            target_series = df[target_column].dropna()
+            
+            if len(target_series) == 0:
+                return Response({
+                    'error': 'La columna objetivo no tiene valores válidos',
+                    'error_code': 'EMPTY_TARGET_COLUMN'
+                }, status=400)
+            
+            # Lógica de sugerencia
+            suggestion = self._analyze_target_column(target_series)
+            
+            # Información adicional del dataset
+            dataset_info = {
+                'total_rows': len(df),
+                'total_columns': len(df.columns),
+                'target_column_info': {
+                    'name': target_column,
+                    'non_null_values': len(target_series),
+                    'unique_values': target_series.nunique(),
+                    'data_type': str(target_series.dtype)
+                }
+            }
+            
+            return Response({
+                'suggested_task_type': suggestion['task_type'],
+                'confidence': suggestion['confidence'],
+                'reasoning': suggestion['reasoning'],
+                'dataset_info': dataset_info,
+                'analysis_details': suggestion['details']
+            })
+            
+        except Exception as e:
+            logging.error(f"SuggestTaskTypeView error: {str(e)}", exc_info=True)
+            return Response({
+                'error': 'Error interno del servidor',
+                'detail': str(e),
+                'error_code': 'INTERNAL_SERVER_ERROR'
+            }, status=500)
+    
+    def _analyze_target_column(self, target_series):
+        """Analiza la columna objetivo y sugiere el tipo de tarea"""
+        
+        total_values = len(target_series)
+        unique_values = target_series.nunique()
+        data_type = target_series.dtype
+        
+        # Obtener algunos valores de ejemplo
+        sample_values = target_series.unique()[:10].tolist()
+        
+        # Análisis por tipo de datos
+        if pd.api.types.is_numeric_dtype(target_series):
+            # Es numérico
+            
+            # Calcular ratio de valores únicos
+            unique_ratio = unique_values / total_values
+            
+            # Verificar si son enteros
+            is_integer = target_series.apply(lambda x: float(x).is_integer()).all()
+            
+            # Rango de valores
+            min_val = target_series.min()
+            max_val = target_series.max()
+            
+            if unique_values <= 20 and is_integer:
+                # Pocos valores únicos enteros -> probablemente clasificación
+                return {
+                    'task_type': 'classification',
+                    'confidence': 'alta',
+                    'reasoning': f'La columna tiene {unique_values} valores únicos enteros, lo que sugiere categorías discretas.',
+                    'details': {
+                        'unique_values': unique_values,
+                        'unique_ratio': round(unique_ratio, 3),
+                        'is_integer': is_integer,
+                        'sample_values': sample_values,
+                        'range': f'{min_val} - {max_val}'
+                    }
+                }
+            elif unique_ratio > 0.1:
+                # Muchos valores únicos -> probablemente regresión
+                return {
+                    'task_type': 'regression',
+                    'confidence': 'alta',
+                    'reasoning': f'La columna tiene {unique_values} valores únicos ({round(unique_ratio*100, 1)}% del total), indicando valores continuos.',
+                    'details': {
+                        'unique_values': unique_values,
+                        'unique_ratio': round(unique_ratio, 3),
+                        'is_integer': is_integer,
+                        'sample_values': sample_values,
+                        'range': f'{min_val} - {max_val}'
+                    }
+                }
+            else:
+                # Caso ambiguo
+                return {
+                    'task_type': 'classification',
+                    'confidence': 'media',
+                    'reasoning': f'La columna tiene {unique_values} valores únicos. Podría ser clasificación con muchas clases o regresión con valores discretos.',
+                    'details': {
+                        'unique_values': unique_values,
+                        'unique_ratio': round(unique_ratio, 3),
+                        'is_integer': is_integer,
+                        'sample_values': sample_values,
+                        'range': f'{min_val} - {max_val}',
+                        'note': 'Considera si los valores representan categorías o medidas continuas'
+                    }
+                }
+        else:
+            # No es numérico -> clasificación
+            unique_ratio = unique_values / total_values
+            
+            if unique_values <= 50:
+                confidence = 'alta'
+                reasoning = f'La columna contiene texto/categorías con {unique_values} valores únicos, ideal para clasificación.'
+            else:
+                confidence = 'media'
+                reasoning = f'La columna contiene texto con {unique_values} valores únicos. Muchas categorías pueden complicar la clasificación.'
+            
+            return {
+                'task_type': 'classification',
+                'confidence': confidence,
+                'reasoning': reasoning,
+                'details': {
+                    'unique_values': unique_values,
+                    'unique_ratio': round(unique_ratio, 3),
+                    'data_type': str(data_type),
+                    'sample_values': sample_values,
+                    'note': 'Valores de texto indican clasificación' if unique_values <= 50 else 'Considera agrupar categorías similares'
+                }
             }
