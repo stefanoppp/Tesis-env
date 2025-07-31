@@ -84,7 +84,8 @@ class Command(BaseCommand):
             # Instalación de dependencias GPU
             if config['use_gpu']:
                 self.stdout.write(self.style.SUCCESS('3. GPU detectada - Instalar dependencias opcionales:'))
-                self.stdout.write("   pip install cuml cudf-cu11 cupy-cuda11x")
+                self.stdout.write("   Para NVIDIA: pip install cuml cudf-cu11 cupy-cuda11x")
+                self.stdout.write("   Para AMD: pip uninstall torch && pip install torch-rocm")
             else:
                 self.stdout.write(self.style.HTTP_INFO('3. Optimizaciones CPU - Instalar dependencias opcionales:'))
                 self.stdout.write("   pip install scikit-learn-intelex numba")
@@ -96,7 +97,8 @@ class Command(BaseCommand):
         if config['use_gpu']:
             self.stdout.write("  • GPU detectada: Se usará aceleración por GPU cuando sea posible")
             self.stdout.write("  • Concurrencia reducida para evitar conflictos de GPU")
-            self.stdout.write("  • Asegúrate de tener CUDA instalado correctamente")
+            self.stdout.write("  • Para NVIDIA: Asegúrate de tener CUDA instalado correctamente")
+            self.stdout.write("  • Para AMD: Asegúrate de tener ROCm instalado correctamente")
         else:
             self.stdout.write("  • Sin GPU: Configuración optimizada para CPU")
             self.stdout.write("  • Considera instalar dependencias de optimización CPU")

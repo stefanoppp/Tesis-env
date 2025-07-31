@@ -7,7 +7,7 @@ Este módulo proporciona optimización automática de hardware para la plataform
 ### Detección Automática de Hardware
 - **CPU**: Detecta número de cores y uso actual
 - **RAM**: Detecta memoria disponible y uso actual
-- **GPU**: Detecta disponibilidad de RAPIDS cuML para aceleración GPU
+- **GPU**: Detecta disponibilidad de GPU NVIDIA (CUDA) y AMD (ROCm) para aceleración
 
 ### Optimización Automática
 - **PyCaret**: Configura `n_jobs`, `use_gpu`, modelos preferidos, y tiempo de presupuesto
@@ -43,13 +43,26 @@ celery -A backend worker --loglevel=info --concurrency=2 -Q training
 
 ### 3. Optimizaciones Adicionales
 
-#### Para GPU (si está disponible)
+#### Para GPU NVIDIA (si está disponible)
 ```bash
-# Instalar dependencias GPU
+# Instalar dependencias GPU NVIDIA
 pip install cuml cudf-cu11 cupy-cuda11x
 
 # Verificar instalación
-python -c "import cuml; print('GPU acceleration available')"
+python -c "import cuml; print('NVIDIA GPU acceleration available')"
+```
+
+#### Para GPU AMD (si está disponible)
+```bash
+# Instalar PyTorch con ROCm (reemplazar torch estándar)
+pip uninstall torch
+pip install torch-rocm
+
+# Instalar TensorFlow con ROCm (opcional)
+pip install tensorflow-rocm
+
+# Verificar instalación
+python -c "import torch; print('AMD GPU available:', torch.backends.hip.is_available() if hasattr(torch.backends, 'hip') else False)"
 ```
 
 #### Para CPU (optimizaciones Intel)

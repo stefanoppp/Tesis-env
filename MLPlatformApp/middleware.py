@@ -3,7 +3,7 @@ import time
 import psutil
 from django.utils.deprecation import MiddlewareMixin
 from django.conf import settings
-from .config.dynamic_scaling import dynamic_scaler
+from .config.hardware_optimization import hardware_optimizer
 
 logger = logging.getLogger(__name__)
 
@@ -171,38 +171,19 @@ class SystemLoadMiddleware(MiddlewareMixin):
     def _handle_system_overload(self, cpu_percent, memory_percent, trigger_type="REGULAR"):
         """Manejar sobrecarga del sistema"""
         try:
-            # Usar la instancia ya importada al inicio del archivo
+            # Obtener información del hardware para logging
+            hardware_info = hardware_optimizer.get_system_info()
             
-            # Obtener recomendación de escalado
-            # Simular workers actuales (en producción se obtendría de Celery)
-            current_workers = 2  # Valor por defecto
-            queue_length = 0  # Se podría obtener de Celery
-            
-            recommendation = dynamic_scaler.get_scaling_recommendation(
-                current_workers=current_workers,
-                queue_length=queue_length
+            urgency = "🚨 CRÍTICO" if trigger_type == "INMEDIATO" else "⚠️ REGULAR"
+            logger.warning(
+                f"{urgency} - Sistema sobrecargado ({trigger_type}): "
+                f"CPU {cpu_percent:.1f}%, RAM {memory_percent:.1f}% - "
+                f"Hardware: {hardware_info.get('cpu_count', 'N/A')} CPUs, "
+                f"{hardware_info.get('total_memory_gb', 'N/A')}GB RAM"
             )
             
-            if recommendation:
-                urgency = "🚨 CRÍTICO" if trigger_type == "INMEDIATO" else "⚠️ REGULAR"
-                logger.warning(
-                    f"{urgency} - Aplicando escalado dinámico ({trigger_type}): {recommendation['action']} "
-                    f"(workers: {recommendation.get('recommended_workers', 'N/A')}) - "
-                    f"Causa: CPU {cpu_percent:.1f}%, RAM {memory_percent:.1f}%"
-                )
-                
-                # Para triggers inmediatos, aplicar escalado más agresivo
-                if trigger_type == "INMEDIATO" and recommendation['action'] == 'scale_down':
-                    # Reducir workers más agresivamente en situaciones críticas
-                    if 'recommended_workers' in recommendation:
-                        recommendation['recommended_workers'] = max(1, recommendation['recommended_workers'] - 1)
-                        logger.warning(
-                            f"🚨 ESCALADO CRÍTICO: Reduciendo workers adicionales a {recommendation['recommended_workers']} "
-                            f"debido a condición crítica"
-                        )
-                
-                # Aquí se podría implementar la lógica para aplicar el escalado
-                # Por ejemplo, ajustar la configuración de Celery
+            # El autoescalado de Celery se encargará de ajustar los workers
+            # basándose en la configuración de hardware_optimizer
                 
         except Exception as e:
             logger.error(f"Error manejando sobrecarga del sistema ({trigger_type}): {e}")

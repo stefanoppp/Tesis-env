@@ -89,10 +89,15 @@ class HardwareOptimizer:
         return cpu_info
         
     def _detect_gpu(self) -> bool:
-        """Detecta si hay GPU disponible con múltiples métodos"""
+        """Detecta si hay GPU disponible con múltiples métodos (NVIDIA y AMD)"""
+        # Verificar si la detección de GPU está deshabilitada
+        if os.getenv('DISABLE_GPU_DETECTION', '0') == '1':
+            logger.info("🚫 Detección de GPU deshabilitada por variable de entorno DISABLE_GPU_DETECTION")
+            return False
+            
         gpu_info = []
         
-        # Método 1: cuML (RAPIDS)
+        # Método 1: cuML (RAPIDS) - Solo NVIDIA
         try:
             import cuml
             gpu_info.append("cuML (RAPIDS)")
@@ -101,21 +106,37 @@ class HardwareOptimizer:
         except ImportError:
             pass
             
-        # Método 2: PyTorch CUDA
+        # Método 2: PyTorch CUDA (NVIDIA)
         try:
             import torch
             if torch.cuda.is_available():
                 device_count = torch.cuda.device_count()
                 device_name = torch.cuda.get_device_name(0) if device_count > 0 else "Unknown"
                 gpu_info.append(f"PyTorch CUDA - {device_count} GPU(s) - {device_name}")
-                logger.info(f"✅ GPU detectada con PyTorch: {device_name} ({device_count} dispositivos)")
+                logger.info(f"✅ GPU NVIDIA detectada con PyTorch: {device_name} ({device_count} dispositivos)")
                 return True
         except ImportError:
             pass
         except Exception as e:
-            logger.warning(f"Error al detectar GPU con PyTorch: {e}")
+            logger.warning(f"Error al detectar GPU NVIDIA con PyTorch: {e}")
             
-        # Método 3: TensorFlow
+        # Método 3: PyTorch ROCm (AMD)
+        try:
+            import torch
+            # Verificar si ROCm está disponible
+            if hasattr(torch.backends, 'hip') and torch.backends.hip.is_available():
+                device_count = torch.hip.device_count() if hasattr(torch, 'hip') else 0
+                if device_count > 0:
+                    device_name = torch.hip.get_device_name(0) if hasattr(torch.hip, 'get_device_name') else "AMD GPU"
+                    gpu_info.append(f"PyTorch ROCm - {device_count} GPU(s) - {device_name}")
+                    logger.info(f"✅ GPU AMD detectada con PyTorch ROCm: {device_name} ({device_count} dispositivos)")
+                    return True
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"Error al detectar GPU AMD con PyTorch ROCm: {e}")
+            
+        # Método 4: TensorFlow (NVIDIA y AMD)
         try:
             import tensorflow as tf
             gpus = tf.config.list_physical_devices('GPU')
@@ -128,7 +149,7 @@ class HardwareOptimizer:
         except Exception as e:
             logger.warning(f"Error al detectar GPU con TensorFlow: {e}")
             
-        # Método 4: nvidia-ml-py (NVIDIA Management Library)
+        # Método 5: nvidia-ml-py (NVIDIA Management Library)
         try:
             import pynvml
             pynvml.nvmlInit()
@@ -138,28 +159,47 @@ class HardwareOptimizer:
                     handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                     name = pynvml.nvmlDeviceGetName(handle).decode('utf-8')
                     gpu_info.append(f"NVML - {name}")
-                logger.info(f"✅ GPU detectada con NVML: {device_count} dispositivos NVIDIA")
+                logger.info(f"✅ GPU NVIDIA detectada con NVML: {device_count} dispositivos")
                 return True
         except ImportError:
             pass
         except Exception as e:
-            logger.warning(f"Error al detectar GPU con NVML: {e}")
+            logger.warning(f"Error al detectar GPU NVIDIA con NVML: {e}")
             
-        # Método 5: Detección básica con subprocess (Windows)
+        # Método 6: Detección básica con subprocess (Windows - NVIDIA y AMD)
         try:
             import subprocess
             import platform
             if platform.system() == "Windows":
                 result = subprocess.run(['wmic', 'path', 'win32_VideoController', 'get', 'name'], 
                                       capture_output=True, text=True, timeout=10)
-                if result.returncode == 0 and 'NVIDIA' in result.stdout:
-                    gpu_info.append("Windows WMIC - NVIDIA detectada")
-                    logger.info("✅ GPU NVIDIA detectada via Windows WMIC")
-                    return True
+                if result.returncode == 0:
+                    output = result.stdout.upper()
+                    if 'NVIDIA' in output:
+                        gpu_info.append("Windows WMIC - NVIDIA detectada")
+                        logger.info("✅ GPU NVIDIA detectada via Windows WMIC")
+                        return True
+                    elif 'AMD' in output or 'RADEON' in output:
+                        gpu_info.append("Windows WMIC - AMD detectada")
+                        logger.info("✅ GPU AMD detectada via Windows WMIC")
+                        return True
         except Exception as e:
             logger.warning(f"Error al detectar GPU con WMIC: {e}")
+            
+        # Método 7: rocm-smi para AMD (Linux)
+        try:
+            import subprocess
+            import platform
+            if platform.system() == "Linux":
+                result = subprocess.run(['rocm-smi'], capture_output=True, text=True, timeout=10)
+                if result.returncode == 0 and 'GPU' in result.stdout:
+                    gpu_info.append("ROCm SMI - AMD detectada")
+                    logger.info("✅ GPU AMD detectada via rocm-smi")
+                    return True
+        except Exception as e:
+            logger.warning(f"Error al detectar GPU AMD con rocm-smi: {e}")
                 
-        logger.info("❌ No se detectó GPU compatible")
+        logger.info("❌ No se detectó GPU compatible (NVIDIA o AMD)")
         return False
     
     def get_optimal_config(self) -> Dict[str, Any]:

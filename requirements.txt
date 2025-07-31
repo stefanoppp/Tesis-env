@@ -19,12 +19,16 @@ openpyxl
 gunicorn==21.2.0
 pycaret
 
-# Optimizaciones GPU (opcionales - requieren CUDA)
+# Optimizaciones GPU NVIDIA (opcionales - requieren CUDA)
 # cuml>=0.15  # RAPIDS cuML para aceleración GPU (requiere Python <3.11)
 # cudf>=0.15  # RAPIDS cuDF para DataFrames en GPU (requiere Python <3.11)
 # cupy-cuda11x  # CuPy para operaciones numéricas en GPU
-torch>=2.0.0  # PyTorch con soporte CUDA
+torch>=2.0.0  # PyTorch con soporte CUDA/ROCm
 pynvml>=11.0.0  # NVIDIA Management Library
+
+# Optimizaciones GPU AMD (opcionales - requieren ROCm)
+# torch-rocm  # PyTorch compilado con soporte ROCm para AMD
+# tensorflow-rocm  # TensorFlow compilado con soporte ROCm para AMD
 
 # Optimizaciones CPU
 psutil>=5.8.0  # Para monitoreo de recursos del sistema

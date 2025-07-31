@@ -553,6 +553,7 @@ class PredictView(APIView):
                 'owner': ai_model.user.username,
                 'input_data': input_data,
                 'prediction': result,
+                'imputed_values': result.get('imputed_values', {}),
                 'task_type': ai_model.task_type
             })
             
@@ -574,8 +575,12 @@ class PredictView(APIView):
         
         # Limpiar y validar input_data
         cleaned_input = {}
+        original_input = {}
         for key, value in input_data.items():
             logging.info(f"Processing key: {key}, value: {value}, type: {type(value)}")
+            # Guardar el valor original para comparar
+            original_input[key] = value
+            
             # Si el valor es un diccionario, extraer solo el nombre
             if isinstance(value, dict):
                 if 'name' in value:
@@ -603,8 +608,68 @@ class PredictView(APIView):
         # Convertir input a DataFrame
         input_df = pd.DataFrame([cleaned_input])
         
-        # Hacer predicción
+        # Capturar valores antes de la predicción para detectar reemplazos
+        input_before_prediction = input_df.copy()
+        
+        # Hacer predicción (PyCaret aplicará automáticamente la imputación)
         prediction = model.predict(input_df)
+        
+        # Detectar valores faltantes y obtener los valores de reemplazo
+        imputed_values = {}
+        
+        # Identificar qué valores estaban faltantes en la entrada original
+        missing_features = []
+        for col, val in cleaned_input.items():
+            if val is None or val == '' or (isinstance(val, str) and val.strip() == '') or pd.isna(val):
+                missing_features.append(col)
+        
+        if missing_features:
+            logging.info(f"Características faltantes detectadas: {missing_features}")
+            
+            # Intentar obtener los valores de imputación del modelo entrenado
+            try:
+                # Cargar el experimento de PyCaret para acceder a las estadísticas de imputación
+                if ai_model.task_type == 'classification':
+                    from pycaret.classification import get_config
+                else:
+                    from pycaret.regression import get_config
+                
+                # Intentar obtener las estadísticas de imputación del setup
+                try:
+                    # Obtener el dataset original del modelo para calcular estadísticas
+                    import pickle
+                    import os
+                    
+                    # Buscar archivo de estadísticas junto al modelo
+                    model_path_without_ext = ai_model.model_path.replace('.pkl', '')
+                    stats_file = f"{model_path_without_ext}_imputation_stats.pkl"
+                    
+                    if os.path.exists(stats_file):
+                        with open(stats_file, 'rb') as f:
+                            imputation_stats = pickle.load(f)
+                        
+                        for feature in missing_features:
+                            if feature in imputation_stats:
+                                imputed_values[feature] = imputation_stats[feature]
+                                logging.info(f"Valor imputado para {feature}: {imputation_stats[feature]}")
+                    else:
+                        # Fallback: usar valores por defecto basados en el tipo de característica
+                        for feature in missing_features:
+                            # Intentar determinar si es numérica o categórica basándose en el nombre
+                            # o usar un valor genérico
+                            imputed_values[feature] = "Media/Moda calculada durante entrenamiento"
+                            
+                except Exception as inner_e:
+                    logging.warning(f"No se pudieron cargar estadísticas de imputación: {str(inner_e)}")
+                    # Fallback final
+                    for feature in missing_features:
+                        imputed_values[feature] = "Valor reemplazado automáticamente (media para numéricos, moda para categóricos)"
+                        
+            except Exception as e:
+                logging.warning(f"Error al obtener valores de imputación: {str(e)}")
+                # Fallback: marcar las características faltantes
+                for feature in missing_features:
+                    imputed_values[feature] = "Valor reemplazado automáticamente"
         
         if ai_model.task_type == 'classification':
             try:
@@ -614,17 +679,20 @@ class PredictView(APIView):
                 return {
                     'predicted_class': str(prediction[0]),
                     'probabilities': probabilities[0].tolist(),
-                    'confidence': confidence
+                    'confidence': confidence,
+                    'imputed_values': imputed_values
                 }
             except:
                 return {
                     'predicted_class': str(prediction[0]),
                     'probabilities': None,
-                    'confidence': None
+                    'confidence': None,
+                    'imputed_values': imputed_values
                 }
         else:
             return {
-                'predicted_value': float(prediction[0])
+                'predicted_value': float(prediction[0]),
+                'imputed_values': imputed_values
             }
 
 class DeleteModelView(APIView):

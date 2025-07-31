@@ -35,6 +35,18 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
         data = pd.read_csv(csv_file_path)
         logger.info(f"Dataset shape: {data.shape}")
         
+        # LIMPIAR VALORES NULOS EN LA COLUMNA TARGET
+        initial_rows = len(data)
+        data = data.dropna(subset=[target_column])
+        final_rows = len(data)
+        
+        if final_rows < initial_rows:
+            logger.info(f"Eliminadas {initial_rows - final_rows} filas con valores nulos en la columna target '{target_column}'")
+            logger.info(f"Dataset shape después de limpiar target: {data.shape}")
+        
+        if len(data) == 0:
+            raise ValueError(f"No quedan datos después de eliminar valores nulos de la columna target '{target_column}'")
+        
         # VALIDACIÓN BÁSICA
         if task_type == 'regression':
             numeric_cols = data.select_dtypes(include='number').columns.tolist()
@@ -257,7 +269,7 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
         ai_model.progress = 80
         ai_model.save()
         
-        # 5. GUARDAR MODELO
+        # 5. GUARDAR MODELO Y ESTADÍSTICAS DE IMPUTACIÓN
         logger.info("Saving model...")
         model_dir = f"media/models/{ai_model.user.username}/"
         os.makedirs(model_dir, exist_ok=True)
@@ -265,6 +277,35 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
         safe_name = ai_model.name.replace(' ', '_').replace('-', '_')
         safe_name = ''.join(c for c in safe_name if c.isalnum() or c == '_')
         model_path = f"{model_dir}{safe_name}_{model_id[:8]}"
+        
+        # Guardar estadísticas de imputación para usar en predicciones
+        try:
+            imputation_stats = {}
+            
+            # Obtener estadísticas del dataset de entrenamiento para imputación
+            for column in data.columns:
+                if column != target_column and column not in ignored_columns:
+                    if data[column].dtype in ['int64', 'float64']:
+                        # Para columnas numéricas, usar la media
+                        imputation_stats[column] = float(data[column].mean())
+                    else:
+                        # Para columnas categóricas, usar la moda
+                        mode_value = data[column].mode()
+                        if len(mode_value) > 0:
+                            imputation_stats[column] = str(mode_value.iloc[0])
+                        else:
+                            imputation_stats[column] = "Valor más común"
+            
+            # Guardar las estadísticas junto al modelo
+            stats_path = f"{model_path}_imputation_stats.pkl"
+            import pickle
+            with open(stats_path, 'wb') as f:
+                pickle.dump(imputation_stats, f)
+            
+            logger.info(f"Estadísticas de imputación guardadas: {imputation_stats}")
+            
+        except Exception as e:
+            logger.warning(f"No se pudieron guardar las estadísticas de imputación: {str(e)}")
         
         save_model(best_model, model_path)
         logger.info(f"Model saved to: {model_path}.pkl")

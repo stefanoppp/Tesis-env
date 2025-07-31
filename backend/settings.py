@@ -163,54 +163,45 @@ CELERY_WORKER_LOG_COLOR = False
 
 # Configuración automática de Celery con escalado dinámico
 try:
-    from MLPlatformApp.config.celery_config import get_celery_config, get_dynamic_celery_config, log_celery_recommendations
-    from MLPlatformApp.config.dynamic_scaling import dynamic_scaler
+    from MLPlatformApp.config.celery_config import get_celery_config
     import os
+    import sys
     
-    # Verificar si el escalado dinámico está habilitado
-    dynamic_scaling_enabled = os.getenv('DYNAMIC_SCALING_ENABLED', 'true').lower() == 'true'
+    # Detectar si este proceso es Flower (no necesita detección de GPU)
+    is_flower_process = 'flower' in ' '.join(sys.argv)
     
-    if dynamic_scaling_enabled:
-        # Usar configuración dinámica (se ajusta según carga actual)
-        celery_config = get_dynamic_celery_config(queue_length=0)  # Configuración inicial
-        print("[CELERY] Escalado dinámico HABILITADO - Configuración se ajustará automáticamente")
-    else:
-        # Usar configuración estática optimizada
+    if not is_flower_process:
+        # Configuración de Celery basada en hardware
         celery_config = get_celery_config()
-        print("[CELERY] Escalado dinámico DESHABILITADO - Usando configuración estática")
-    
-    # Aplicar configuración de Celery
-    CELERY_WORKER_CONCURRENCY = celery_config['worker_concurrency']
-    CELERY_WORKER_PREFETCH_MULTIPLIER = celery_config['worker_prefetch_multiplier']
-    CELERY_TASK_ACKS_LATE = celery_config['task_acks_late']
-    CELERY_WORKER_MAX_TASKS_PER_CHILD = celery_config['worker_max_tasks_per_child']
-    CELERY_TASK_SOFT_TIME_LIMIT = celery_config['task_soft_time_limit']
-    CELERY_TASK_TIME_LIMIT = celery_config['task_time_limit']
-    CELERY_WORKER_DISABLE_RATE_LIMITS = celery_config['worker_disable_rate_limits']
-    CELERY_TASK_REJECT_ON_WORKER_LOST = celery_config['task_reject_on_worker_lost']
-    
-    # Configuraciones adicionales para escalado dinámico
-    if dynamic_scaling_enabled:
-        # Límites de seguridad del sistema
-        CPU_THRESHOLD = int(os.getenv('CPU_THRESHOLD', '80'))
-        MEMORY_THRESHOLD = int(os.getenv('MEMORY_THRESHOLD', '80'))
+        print("[CELERY] Usando configuración optimizada basada en hardware")
         
-        # Configurar autoscale de Celery
-        optimal_workers, scaling_config = dynamic_scaler.calculate_optimal_workers(0)
-        max_workers = scaling_config['max_workers']
-        min_workers = 1
+        # Aplicar configuración de Celery
+        CELERY_WORKER_CONCURRENCY = celery_config['worker_concurrency']
+        CELERY_WORKER_PREFETCH_MULTIPLIER = celery_config['worker_prefetch_multiplier']
+        CELERY_TASK_ACKS_LATE = celery_config['task_acks_late']
+        CELERY_WORKER_MAX_TASKS_PER_CHILD = celery_config['worker_max_tasks_per_child']
+        CELERY_TASK_SOFT_TIME_LIMIT = celery_config['task_soft_time_limit']
+        CELERY_TASK_TIME_LIMIT = celery_config['task_time_limit']
+        CELERY_WORKER_DISABLE_RATE_LIMITS = celery_config['worker_disable_rate_limits']
+        CELERY_TASK_REJECT_ON_WORKER_LOST = celery_config['task_reject_on_worker_lost']
         
-        # Variables para autoscale
-        CELERY_WORKER_AUTOSCALER = f'{max_workers},{min_workers}'
-        CELERY_WORKER_AUTOSCALE_MAX = max_workers
-        CELERY_WORKER_AUTOSCALE_MIN = min_workers
+        # Configurar autoscale básico de Celery
+        CELERY_WORKER_AUTOSCALER = '4,1'  # max_workers=4, min_workers=1
+        CELERY_WORKER_AUTOSCALE_MAX = 4
+        CELERY_WORKER_AUTOSCALE_MIN = 1
         
-        print(f"[CELERY] Autoscale configurado: {min_workers}-{max_workers} workers")
-        print(f"[CELERY] Límites de seguridad: CPU<{CPU_THRESHOLD}%, RAM<{MEMORY_THRESHOLD}%")
-        print(f"[CELERY] Estrategia: {scaling_config['strategy']}")
-    
-    # Registrar recomendaciones en los logs
-    log_celery_recommendations()
+        print(f"[CELERY] Autoscale configurado: 1-4 workers basado en hardware")
+    else:
+        # Configuración mínima para Flower (sin detección de hardware)
+        print("[FLOWER] Iniciando panel de monitoreo - Sin detección de hardware")
+        CELERY_WORKER_CONCURRENCY = 1
+        CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+        CELERY_TASK_ACKS_LATE = True
+        CELERY_WORKER_MAX_TASKS_PER_CHILD = 10
+        CELERY_TASK_SOFT_TIME_LIMIT = 1800
+        CELERY_TASK_TIME_LIMIT = 2400
+        CELERY_WORKER_DISABLE_RATE_LIMITS = False
+        CELERY_TASK_REJECT_ON_WORKER_LOST = True
     
 except ImportError as e:
     print(f"[CELERY] Error importando configuración dinámica: {e}")
@@ -287,10 +278,7 @@ ML_PLATFORM_SETTINGS = {
     'MAX_BULK_DELETE_MODELS': 100,
 }
 
-# === CONFIGURACIÓN DE ESCALADO DINÁMICO ===
-
-# Habilitar/deshabilitar escalado dinámico
-DYNAMIC_SCALING_ENABLED = os.getenv('DYNAMIC_SCALING_ENABLED', 'true').lower() == 'true'
+# === CONFIGURACIÓN DE MONITOREO ===
 
 # Límites de seguridad del sistema (porcentajes)
 CPU_THRESHOLD = int(os.getenv('CPU_THRESHOLD', '80'))
@@ -301,8 +289,6 @@ SYSTEM_MONITORING_SETTINGS = {
     'CHECK_INTERVAL_SECONDS': 30,  # Verificar carga cada 30 segundos
     'LOW_LOAD_CPU_THRESHOLD': 50,  # CPU < 50% = baja carga
     'LOW_LOAD_MEMORY_THRESHOLD': 50,  # RAM < 50% = baja carga
-    'ENABLE_SCALE_UP_RECOMMENDATIONS': True,
-    'ENABLE_SCALE_DOWN_ENFORCEMENT': True,
     'LOG_SYSTEM_METRICS': True,
 }
 
@@ -337,17 +323,12 @@ LOGGING = {
             'level': 'INFO',
             'propagate': True,
         },
-        'MLPlatformApp.config.dynamic_scaling': {
-            'handlers': ['console', 'file'],
-            'level': 'INFO',
-            'propagate': True,
-        },
+
     },
 }
 
 # Crear directorio de logs si no existe
 os.makedirs(os.path.join(BASE_DIR, 'logs'), exist_ok=True)
 
-print(f"[SISTEMA] Escalado dinámico: {'HABILITADO' if DYNAMIC_SCALING_ENABLED else 'DESHABILITADO'}")
 print(f"[SISTEMA] Límites de seguridad: CPU<{CPU_THRESHOLD}%, RAM<{MEMORY_THRESHOLD}%")
 print(f"[SISTEMA] Middleware de monitoreo: ACTIVO")
