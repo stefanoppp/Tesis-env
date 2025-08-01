@@ -30,10 +30,29 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
         training_start_time = time.time()
         
         logger.info(f"Starting training for model {model_id}")
+        logger.info(f"CSV file path: {csv_file_path}")
         
-        # 1. CARGAR DATOS DESDE ARCHIVO
+        # 1. VERIFICAR QUE EL ARCHIVO CSV EXISTE
+        if not os.path.exists(csv_file_path):
+            error_msg = f"CSV file not found: {csv_file_path}"
+            logger.error(error_msg)
+            ai_model.status = 'failed'
+            ai_model.progress = 0
+            ai_model.save()
+            raise FileNotFoundError(error_msg)
+        
+        # 2. CARGAR DATOS DESDE ARCHIVO
         data = pd.read_csv(csv_file_path)
         logger.info(f"Dataset shape: {data.shape}")
+        
+        # Validar que el dataset no esté vacío
+        if data.empty:
+            error_msg = f"Dataset is empty: {csv_file_path}"
+            logger.error(error_msg)
+            ai_model.status = 'failed'
+            ai_model.progress = 0
+            ai_model.save()
+            raise ValueError(error_msg)
         
         # LIMPIAR VALORES NULOS EN LA COLUMNA TARGET
         initial_rows = len(data)
@@ -128,22 +147,37 @@ def train_model_task(self, model_id, csv_file_path, target_column, ignored_colum
             train_size = 0.8
             logger.info(f"Tarea de regresión. Usando {adjusted_cv_folds} CV folds")
         
-        # Configuración optimizada según hardware disponible
+        # VALIDACIÓN CRÍTICA: Dataset muy pequeño
+        if len(data) < 10:
+            error_msg = f"Dataset demasiado pequeño: {len(data)} filas. Se requieren al menos 10 filas para entrenamiento."
+            logger.error(error_msg)
+            ai_model.status = 'failed'
+            ai_model.progress = 0
+            ai_model.save()
+            raise ValueError(error_msg)
+        
+        # Configuración optimizada según hardware disponible y tamaño del dataset
+        # Para datasets pequeños, usar configuración menos agresiva
+        is_small_dataset = len(data) < 100
+        
         setup_params = {
             'data': data,
             'target': target_column,
             'ignore_features': ignored_columns,
-            'remove_multicollinearity': True,
-            'remove_outliers': True,
+            'remove_multicollinearity': not is_small_dataset,  # Desactivar para datasets pequeños
+            'remove_outliers': not is_small_dataset,  # Desactivar para datasets pequeños
             'imputation_type': "simple",
             'numeric_imputation': "mean",
             'categorical_imputation': "mode",
-            'normalize': True,
+            'normalize': not is_small_dataset,  # Desactivar normalización para datasets pequeños
             'verbose': False,
             'n_jobs': config['n_jobs'],
             'session_id': 123,
             'train_size': train_size  # Tamaño de entrenamiento ajustado
         }
+        
+        if is_small_dataset:
+            logger.warning(f"Dataset pequeño detectado ({len(data)} filas). Usando configuración conservadora: sin eliminación de multicolinealidad, outliers ni normalización.")
         
         # Agregar fold solo si no es None (para evitar holdout cuando hay clases con 1 muestra)
         if adjusted_cv_folds is not None:

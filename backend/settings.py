@@ -154,6 +154,8 @@ CELERY_ENABLE_UTC = True
 CELERY_TASK_DEFAULT_QUEUE = 'training'
 CELERY_TASK_ROUTES = {
     'MLPlatformApp.training.train_model_task': {'queue': 'training'},
+    'UsersApp.tasks.cleanup_failed_models': {'queue': 'default'},
+    'UsersApp.tasks.detect_stuck_models': {'queue': 'default'},
 }
 
 # Configuraciones básicas de Celery worker
@@ -332,3 +334,25 @@ os.makedirs(os.path.join(BASE_DIR, 'logs'), exist_ok=True)
 
 print(f"[SISTEMA] Límites de seguridad: CPU<{CPU_THRESHOLD}%, RAM<{MEMORY_THRESHOLD}%")
 print(f"[SISTEMA] Middleware de monitoreo: ACTIVO")
+
+# === CONFIGURACIÓN CELERY BEAT ===
+# Tareas programadas automáticas
+CELERY_BEAT_SCHEDULE = {
+    'cleanup-failed-models': {
+        'task': 'UsersApp.tasks.cleanup_failed_models',
+        'schedule': 86400.0,  # Cada 24 horas (en segundos)
+        'options': {'queue': 'default'}
+    },
+    'detect-stuck-models': {
+        'task': 'UsersApp.tasks.detect_stuck_models', 
+        'schedule': 1800.0,  # Cada 30 minutos (en segundos)
+        'options': {'queue': 'default'}
+    },
+}
+
+# Usar el scheduler de base de datos para persistencia
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+print("[CELERY BEAT] Tareas programadas configuradas:")
+print("  • Limpieza de modelos fallidos: cada 24 horas")
+print("  • Detección de modelos colgados: cada 30 minutos")
